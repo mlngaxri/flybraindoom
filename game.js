@@ -1,5 +1,6 @@
 const DOOM_COMMIT = '64de0924591dec59a7d49a7d10467e125b50ea99';
-const DOOM_BASE = `https://cdn.jsdelivr.net/gh/gabrielbotandev/doom-wasm@${DOOM_COMMIT}/web/public/engine/`;
+const DOOM_MODULE_BASE = `https://cdn.jsdelivr.net/gh/gabrielbotandev/doom-wasm@${DOOM_COMMIT}/web/public/engine/`;
+const DOOM_RAW_BASE = `https://raw.githubusercontent.com/gabrielbotandev/doom-wasm/${DOOM_COMMIT}/web/public/engine/`;
 
 export const ACTIONS = [
   { name: 'forward', keys: ['ArrowUp'] },
@@ -21,29 +22,38 @@ export class DoomGame {
   }
 
   async boot() {
-    const createModule = (await import(`${DOOM_BASE}chocolate-doom.js`)).default;
+    const createModule = (await import(`${DOOM_MODULE_BASE}chocolate-doom.js`)).default;
     const module = await createModule({
       canvas: this.canvas,
       keyboardListeningElement: this.canvas,
-      locateFile: (path) => `${DOOM_BASE}${path}`,
+      locateFile: (path) => {
+        if (path === 'chocolate-doom.data' || path === 'chocolate-doom.wasm') {
+          return `${DOOM_RAW_BASE}${path}`;
+        }
+        return `${DOOM_MODULE_BASE}${path}`;
+      },
       noInitialRun: true,
       print: () => {},
       printErr: (text) => console.warn('[doom]', text),
     });
+
     for (const dir of ['/config', '/savegames']) {
       try { module.FS.mkdir(dir); } catch {}
     }
     module.FS.writeFile('/config/default.cfg', 'fullscreen 0\nwindow_width 320\nwindow_height 200\ngrabmouse 0\nuse_mouse 0\n');
     module.FS.writeFile('/config/chocolate-doom.cfg', 'smooth_pixel_scaling 0\nforce_software_renderer 1\n');
+
     const args = [
       '-window', '-iwad', '/iwads/freedoom2.wad', '-warp', '1', '-skill', '2', '-nomusic',
       '-savedir', '/savegames', '-config', '/config/default.cfg', '-extraconfig', '/config/chocolate-doom.cfg',
     ];
+
     try { module.callMain(args); }
     catch (error) {
       const text = String(error || '');
       if (!text.includes('unwind') && !text.includes('SimulateInfiniteLoop')) throw error;
     }
+
     this.module = module;
     this.canvas.focus();
   }
