@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Fly Brain Doom</title>
+  <meta name="description" content="A browser experiment connecting a Drosophila connectome simulation to Freedoom vision and navigation." />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">CONNECTOME × GAME LOOP</p>
+        <h1>Fly Brain Doom</h1>
+      </div>
+      <div class="header-actions">
+        <span id="brain-status" class="status status-warn">brain loading</span>
+        <span id="game-status" class="status">game idle</span>
+        <button id="start-button" class="primary">Start experiment</button>
+        <button id="pause-button" disabled>Pause</button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="panel game-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">ENVIRONMENT</p>
+            <h2>Freedoom</h2>
+          </div>
+          <div class="tiny-stats">
+            <span>episode <b id="episode">0</b></span>
+            <span>reward <b id="reward">0.00</b></span>
+            <span>best <b id="best-reward">0.00</b></span>
+          </div>
+        </div>
+        <div class="game-wrap">
+          <canvas id="doom-canvas" width="320" height="200" tabindex="0" aria-label="Freedoom game view"></canvas>
+          <div id="game-overlay" class="game-overlay">
+            <div>
+              <strong>Closed-loop experiment</strong>
+              <span>Start to boot Freedoom and the fly controller.</span>
+            </div>
+          </div>
+        </div>
+        <div class="action-strip" aria-label="Current controller output">
+          <span id="action-label">idle</span>
+          <div class="action-bars">
+            <label>forward <i><b id="bar-forward"></b></i></label>
+            <label>left <i><b id="bar-left"></b></i></label>
+            <label>right <i><b id="bar-right"></b></i></label>
+            <label>use <i><b id="bar-use"></b></i></label>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel brain-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">NEURAL STATE</p>
+            <h2>Whole-brain activity</h2>
+          </div>
+          <div class="tiny-stats">
+            <span>active <b id="active-neurons">0</b></span>
+            <span>rate <b id="mean-rate">0.00 Hz</b></span>
+          </div>
+        </div>
+        <canvas id="brain-canvas" width="720" height="440" aria-label="Live fly brain activity"></canvas>
+        <div class="brain-footer">
+          <div>
+            <span>turn bias</span>
+            <b id="turn-bias">0.000</b>
+          </div>
+          <div>
+            <span>escape</span>
+            <b id="escape-drive">0.000</b>
+          </div>
+          <div>
+            <span>freeze</span>
+            <b id="freeze-drive">0.000</b>
+          </div>
+          <div>
+            <span>sim time</span>
+            <b id="sim-time">0 ms</b>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel retina-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="kicker">SENSORY ENCODER</p>
+            <h2>Fly view</h2>
+          </div>
+          <span id="vision-summary" class="muted">waiting for frames</span>
+        </div>
+        <canvas id="retina-canvas" width="192" height="120" aria-label="Downsampled fly sensory view"></canvas>
+        <div class="sector-grid">
+          <div><span>left motion</span><b id="motion-left">0.000</b></div>
+          <div><span>centre motion</span><b id="motion-center">0.000</b></div>
+          <div><span>right motion</span><b id="motion-right">0.000</b></div>
+          <div><span>novelty</span><b id="novelty">0.000</b></div>
+        </div>
+      </article>
+
+      <article class="panel learning-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="kicker">REINFORCEMENT</p>
+            <h2>Learning telemetry</h2>
+          </div>
+          <button id="reset-learning">Reset learning</button>
+        </div>
+        <canvas id="reward-canvas" width="520" height="170" aria-label="Reward history"></canvas>
+        <div class="learning-grid">
+          <div><span>step reward</span><b id="step-reward">0.000</b></div>
+          <div><span>exploration ε</span><b id="epsilon">0.180</b></div>
+          <div><span>policy updates</span><b id="updates">0</b></div>
+          <div><span>terminal proxy</span><b id="terminal-state">none</b></div>
+        </div>
+      </article>
+
+      <article class="panel methods-panel">
+        <div class="panel-head compact">
+          <div>
+            <p class="kicker">METHOD</p>
+            <h2>What is real vs modelled</h2>
+          </div>
+        </div>
+        <div class="method-columns">
+          <div>
+            <h3>Measured / sourced</h3>
+            <p>Connectome topology and neuron metadata are loaded from the browser-ready FlyWire dataset used by Fruit Fly Lab.</p>
+            <p>Freedoom runs through a WebAssembly Chocolate Doom build.</p>
+          </div>
+          <div>
+            <h3>Engineered</h3>
+            <p>Game frames are reduced to motion and looming-like visual signals. A small reinforcement readout learns how neural activity maps to navigation controls.</p>
+            <p>Weapon firing is disabled. The agent can move, turn and use/open.</p>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <canvas id="feature-canvas" width="48" height="30" hidden></canvas>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
