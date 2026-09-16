@@ -1,4 +1,10 @@
-const BASE = 'https://cdn.jsdelivr.net/gh/vaibhavkedarisetti/fruit-fly-lab@26672e06427c12c61536ce1bd93dae7442944681/web';
+const SOURCE_COMMIT = '26672e06427c12c61536ce1bd93dae7442944681';
+const MODULE_BASE = `https://cdn.jsdelivr.net/gh/vaibhavkedarisetti/fruit-fly-lab@${SOURCE_COMMIT}/web`;
+const DATA_BASE = `https://raw.githubusercontent.com/vaibhavkedarisetti/fruit-fly-lab/${SOURCE_COMMIT}/web/data`;
+const EXPECTED_BYTES = {
+  connectome: 22951784,
+  neurons: 3481375,
+};
 
 let decodeConnectome;
 let Session;
@@ -17,18 +23,35 @@ const send = (type, payload = {}, transfer = undefined) => {
 
 async function loadModules() {
   const [engineMod, simMod] = await Promise.all([
-    import(`${BASE}/js/engine.js`),
-    import(`${BASE}/js/sim.js`),
+    import(`${MODULE_BASE}/js/engine.js`),
+    import(`${MODULE_BASE}/js/sim.js`),
   ]);
   decodeConnectome = engineMod.decodeConnectome;
   Session = simMod.Session;
 }
 
-async function fetchBuffer(url, label) {
-  const response = await fetch(url, { mode: 'cors', cache: 'force-cache' });
-  if (!response.ok) throw new Error(`${label}: HTTP ${response.status}`);
-  const total = Number(response.headers.get('content-length')) || 0;
-  if (!response.body) return response.arrayBuffer();
+async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchBuffer(url, label, expectedBytes) {
+  const response = await fetchWithTimeout(url, { mode: 'cors', cache: 'force-cache' });
+  if (!response.ok) throw new Error(`${label} download failed: HTTP ${response.status}`);
+
+  const headerTotal = Number(response.headers.get('content-length')) || 0;
+  const total = expectedBytes || headerTotal;
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    send('progress', { label, loaded: buffer.byteLength, total: total || buffer.byteLength });
+    return buffer;
+  }
+
   const reader = response.body.getReader();
   const chunks = [];
   let loaded = 0;
@@ -39,11 +62,16 @@ async function fetchBuffer(url, label) {
     loaded += value.byteLength;
     send('progress', { label, loaded, total });
   }
+
   const out = new Uint8Array(loaded);
   let offset = 0;
   for (const chunk of chunks) {
     out.set(chunk, offset);
     offset += chunk.byteLength;
+  }
+
+  if (expectedBytes && loaded !== expectedBytes) {
+    throw new Error(`${label} size mismatch: expected ${expectedBytes} bytes, received ${loaded}`);
   }
   return out.buffer;
 }
@@ -63,13 +91,18 @@ async function boot() {
   try {
     send('status', { message: 'loading simulator modules' });
     await loadModules();
+
     send('status', { message: 'loading connectome metadata' });
-    meta = await (await fetch(`${BASE}/data/meta.json`, { cache: 'force-cache' })).json();
+    const metaResponse = await fetchWithTimeout(`${DATA_BASE}/meta.json`, { mode: 'cors', cache: 'force-cache' }, 30000);
+    if (!metaResponse.ok) throw new Error(`metadata download failed: HTTP ${metaResponse.status}`);
+    meta = await metaResponse.json();
+
     send('status', { message: 'loading connectome graph' });
     const [connectomeBuffer, neuronBuffer] = await Promise.all([
-      fetchBuffer(`${BASE}/data/connectome.bin`, 'connectome'),
-      fetchBuffer(`${BASE}/data/neurons.bin`, 'neurons'),
+      fetchBuffer(`${DATA_BASE}/connectome.bin`, 'connectome', EXPECTED_BYTES.connectome),
+      fetchBuffer(`${DATA_BASE}/neurons.bin`, 'neurons', EXPECTED_BYTES.neurons),
     ]);
+
     send('status', { message: 'decoding 139k-neuron graph' });
     const connectivity = decodeConnectome(connectomeBuffer, meta.n, meta.nnz);
     neurons = decodeNeurons(neuronBuffer, meta.n);
@@ -83,7 +116,10 @@ async function boot() {
       positions,
     }, [positions.buffer]);
   } catch (error) {
-    send('error', { message: error instanceof Error ? error.message : String(error) });
+    const message = error?.name === 'AbortError'
+      ? 'brain asset download timed out'
+      : (error instanceof Error ? error.message : String(error));
+    send('error', { message });
   }
 }
 
