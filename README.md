@@ -1,30 +1,33 @@
-# Fly Brain Flappy
+# Fly Brain Doom
 
-A browser experiment that connects a Drosophila connectome simulation to a Flappy-style visual-control benchmark.
+A browser experiment that connects a Drosophila connectome simulation to a live Freedoom navigation environment.
 
 ## What it does
 
-- runs an original browser Flappy-style environment with replacement artwork;
-- downsamples the complete game frame into spatial motion/temporal-contrast signals;
-- projects the strongest visual candidates into LC4/LPLC2 receptive fields in a browser whole-brain simulation;
+- boots Freedoom in the browser through a WebAssembly Chocolate Doom build;
+- samples the complete game framebuffer rather than a cropped spectator view;
+- separates camera rotation from forward optic flow so spinning is not treated as useful progress;
+- detects rapid expansion, strong local motion and sudden darkening as threat-like visual events;
+- projects those events into LC4/LPLC2 receptive fields in a browser whole-brain simulation;
 - reads descending-neuron and population activity into a small reinforcement-learning readout;
-- exposes only two learned actions: **flap** and **coast**;
-- rewards survival and pipe passes, strongly penalises collisions, and gives an additional bonus for a new best score;
-- renders live gameplay, modeled fly visual drive, neural activity, policy actions and reward history;
-- persists learned readout weights and experiment history in `localStorage`;
-- supports a fullscreen spectator view without changing what the fly receives.
+- maps the learned output to navigation controls only: forward, left, right and use/open;
+- penalizes spinning, repeated visual loops, prolonged immobility and high threat exposure;
+- renders live game vision, neural activity, modeled threat drive, policy actions and reward history;
+- persists the Doom readout weights and experiment history in `localStorage`.
 
-The policy does **not** receive pipe coordinates, bird height, velocity, collision geometry or other hidden game state. Its action input is neural telemetry only. Game events are used only as the external reinforcement signal.
+Weapon firing is deliberately not part of the controller.
+
+## Threat mode
+
+“Scary for the fly” is implemented as a stronger **modeled threat drive**, not as a claim that the simulation has subjective fear. Rapid image expansion, sudden darkening and strong non-rotational local motion are selectively amplified into looming stimuli. The browser worker then projects those stimuli through Fruit Fly Lab's existing LC4/LPLC2 looming encoder using more urgent approach parameters.
+
+This keeps the scientific boundary explicit: the connectome structure is sourced, while the neuron dynamics, sensory encoding, threat amplification, reward function and neural-to-action readout are engineering choices.
 
 ## Scientific boundary
 
-The connectome topology and neuron metadata are sourced from the browser-ready FlyWire-derived dataset used by [Fruit Fly Lab](https://github.com/vaibhavkedarisetti/fruit-fly-lab). The neural dynamics, sensory encoding, reward function, flap/coast mapping and readout are modelling choices. This is not a literal reconstructed living fly brain and improvement in score is not evidence of biological learning.
+The connectome topology and neuron metadata are sourced from the browser-ready FlyWire-derived dataset used by [Fruit Fly Lab](https://github.com/vaibhavkedarisetti/fruit-fly-lab). The neural dynamics, sensory encoding, threat model, reward function and readout are modelling choices. This is not a literal reconstructed living fly brain, and improvement in game reward is not evidence of biological learning.
 
-The visual encoder uses motion/looming-like proxies because the referenced browser simulator does not model a complete photoreceptor-to-brain visual system.
-
-## Flappy-style environment
-
-The environment is implemented in this repository from scratch. It is inspired by the one-button obstacle-passing structure of Flappy Bird, but it does not redistribute original Flappy Bird source code, sprites or audio.
+The policy receives neural telemetry only. Raw game pixels are used to construct visual stimulation and environmental reward signals, not as direct action-selection inputs.
 
 ## Run locally
 
@@ -36,11 +39,11 @@ python3 -m http.server 4173
 
 Then open `http://localhost:4173` and press **Start experiment**.
 
-The first load downloads the connectome graph and simulation modules from pinned public upstream resources, so it requires an internet connection.
+The first load downloads the connectome graph and WebAssembly game engine from pinned public sources, so it requires an internet connection.
 
 ## Deployment
 
-The app is static and Vercel-ready. `vercel.json` adds the cross-origin isolation headers used by the browser runtime.
+The app is static and Vercel-ready. `vercel.json` adds the cross-origin headers used by the browser runtime.
 
 ## Upstream components
 
