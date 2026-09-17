@@ -1,33 +1,46 @@
-import { ACTIONS, FlappyGame } from './game.js';
+import { ACTIONS, DoomGame, MockGame } from './game.js';
 import { LinearQLearner, neuralActionPrior, neuralFeatures } from './policy.js';
 
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
 const AUTO = params.get('autostart') === '1';
-const EXPERIMENT_KEY = 'flybraindoom.experiment.v5';
-const LEGACY_EXPERIMENT_KEYS = ['flybraindoom.experiment.v4', 'flybraindoom.experiment.v3'];
-const GRID_COLS = 6;
-const GRID_ROWS = 10;
-const H_FOV_DEG = 100;
-const V_FOV_DEG = 100;
+const EXPERIMENT_KEY = 'flybraindoom.experiment.v4';
+const LEGACY_EXPERIMENT_KEY = 'flybraindoom.experiment.v3';
+const GRID_COLS = 8;
+const GRID_ROWS = 4;
+const H_FOV_DEG = 90;
+const V_FOV_DEG = 60;
 const $ = (s) => document.querySelector(s);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-const gameCanvas = $('#game-canvas');
-const gameWrap = gameCanvas.closest('.game-wrap');
+const engineCanvas = $('#doom-canvas');
+const gameWrap = engineCanvas.closest('.game-wrap');
+const gameViewCanvas = document.createElement('canvas');
+gameViewCanvas.id = 'game-view-canvas';
+gameViewCanvas.width = 960;
+gameViewCanvas.height = 720;
+gameViewCanvas.setAttribute('aria-label', 'Centered full Freedoom game view');
+gameWrap.insertBefore(gameViewCanvas, engineCanvas);
+engineCanvas.classList.add('engine-canvas');
+engineCanvas.setAttribute('aria-hidden', 'true');
+engineCanvas.tabIndex = -1;
+
 const featureCanvas = $('#feature-canvas');
-featureCanvas.width = 72;
-featureCanvas.height = 128;
+featureCanvas.width = 64;
+featureCanvas.height = 48;
 const retinaCanvas = $('#retina-canvas');
-retinaCanvas.width = 360;
-retinaCanvas.height = 600;
+retinaCanvas.width = 720;
+retinaCanvas.height = 480;
 const brainCanvas = $('#brain-canvas');
 const rewardCanvas = $('#reward-canvas');
 
+const gameViewCtx = gameViewCanvas.getContext('2d');
 const featureCtx = featureCanvas.getContext('2d', { willReadFrequently: true });
 const retinaCtx = retinaCanvas.getContext('2d');
 const brainCtx = brainCanvas.getContext('2d');
 const rewardCtx = rewardCanvas.getContext('2d');
+
+gameViewCtx.imageSmoothingEnabled = false;
 featureCtx.imageSmoothingEnabled = true;
 retinaCtx.imageSmoothingEnabled = true;
 
@@ -35,17 +48,17 @@ const ui = {
   start: $('#start-button'), pause: $('#pause-button'), overlay: $('#game-overlay'),
   fullscreen: $('#fullscreen-button'), fullscreenExit: $('#fullscreen-exit'),
   brainStatus: $('#brain-status'), gameStatus: $('#game-status'), episode: $('#episode'),
-  reward: $('#reward'), bestReward: $('#best-reward'), score: $('#score'), bestScore: $('#best-score'),
-  action: $('#action-label'), active: $('#active-neurons'), mean: $('#mean-rate'),
-  turn: $('#turn-bias'), escape: $('#escape-drive'), freeze: $('#freeze-drive'), sim: $('#sim-time'),
-  ml: $('#motion-left'), mc: $('#motion-center'), mr: $('#motion-right'), novelty: $('#visual-change'),
-  vision: $('#vision-summary'), step: $('#step-reward'), epsilon: $('#epsilon'), updates: $('#updates'),
-  terminal: $('#terminal-state'), reset: $('#reset-learning'),
-  bars: { flap: $('#bar-flap'), coast: $('#bar-coast') },
+  reward: $('#reward'), best: $('#best-reward'), action: $('#action-label'),
+  active: $('#active-neurons'), mean: $('#mean-rate'), turn: $('#turn-bias'),
+  escape: $('#escape-drive'), freeze: $('#freeze-drive'), sim: $('#sim-time'),
+  ml: $('#motion-left'), mc: $('#motion-center'), mr: $('#motion-right'), novelty: $('#novelty'),
+  threat: $('#threat-drive'), vision: $('#vision-summary'), step: $('#step-reward'),
+  epsilon: $('#epsilon'), updates: $('#updates'), terminal: $('#terminal-state'), reset: $('#reset-learning'),
+  bars: { forward: $('#bar-forward'), left: $('#bar-left'), right: $('#bar-right'), use: $('#bar-use') },
 };
 
 const state = {
-  game: new FlappyGame(gameCanvas),
+  game: TEST ? new MockGame(engineCanvas) : new DoomGame(engineCanvas),
   running: false,
   gameReady: false,
   brainReady: false,
@@ -55,17 +68,25 @@ const state = {
   previousPixels: null,
   adaptation: null,
   previousFeatures: null,
-  vision: { left: 0, center: 0, right: 0, motion: 0, brightness: 0, stimuli: [], cells: [] },
+  vision: {
+    left: 0, center: 0, right: 0, novelty: 0, brightness: 0,
+    rotation: 0, translation: 0, forwardFlow: 0, sceneNewness: 0,
+    loopScore: 0, darkOnset: 0, threat: 0, stimuli: [], cells: [],
+  },
   episode: 0,
   episodeReward: 0,
   bestReward: 0,
-  bestScore: 0,
-  actionIndex: 1,
-  actionUntil: 0,
+  episodeStartedAt: 0,
+  stillSince: 0,
   lastControlAt: 0,
+  actionIndex: ACTIONS.length - 1,
+  actionUntil: 0,
   rewards: [],
-  episodeScores: [],
   raf: 0,
+  sceneVisits: new Map(),
+  recentSignatures: [],
+  turnDirection: 0,
+  turningSince: 0,
   restored: false,
 };
 
@@ -80,18 +101,11 @@ const setStatus = (el, text, tone = '') => {
 function restoreExperiment() {
   try {
     let saved = JSON.parse(localStorage.getItem(EXPERIMENT_KEY) || 'null');
-    if (!saved) {
-      for (const key of LEGACY_EXPERIMENT_KEYS) {
-        saved = JSON.parse(localStorage.getItem(key) || 'null');
-        if (saved) break;
-      }
-    }
+    if (!saved) saved = JSON.parse(localStorage.getItem(LEGACY_EXPERIMENT_KEY) || 'null');
     if (!saved) return;
     state.episode = Number.isFinite(saved.episode) ? Math.max(0, saved.episode | 0) : 0;
     state.bestReward = Number.isFinite(saved.bestReward) ? saved.bestReward : 0;
-    state.bestScore = Number.isFinite(saved.bestScore) ? Math.max(0, saved.bestScore | 0) : 0;
-    state.rewards = Array.isArray(saved.rewards) ? saved.rewards.filter(Number.isFinite).slice(-600) : [];
-    state.episodeScores = Array.isArray(saved.episodeScores) ? saved.episodeScores.filter(Number.isFinite).slice(-200) : [];
+    state.rewards = Array.isArray(saved.rewards) ? saved.rewards.filter(Number.isFinite).slice(-500) : [];
     state.restored = true;
   } catch {}
 }
@@ -100,12 +114,10 @@ function persistExperiment() {
   learner.persist();
   try {
     localStorage.setItem(EXPERIMENT_KEY, JSON.stringify({
-      version: 5,
+      version: 4,
       episode: state.episode,
       bestReward: state.bestReward,
-      bestScore: state.bestScore,
-      rewards: state.rewards.slice(-600),
-      episodeScores: state.episodeScores.slice(-200),
+      rewards: state.rewards.slice(-500),
       savedAt: Date.now(),
     }));
   } catch {}
@@ -113,10 +125,39 @@ function persistExperiment() {
 
 restoreExperiment();
 ui.episode.textContent = state.episode.toLocaleString();
-ui.bestReward.textContent = state.bestReward.toFixed(2);
-ui.bestScore.textContent = String(state.bestScore);
+ui.best.textContent = state.bestReward.toFixed(2);
 ui.epsilon.textContent = learner.epsilon.toFixed(3);
 ui.updates.textContent = learner.updates.toLocaleString();
+
+function drawFullFrame(source, ctx, targetW, targetH) {
+  ctx.save();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, targetW, targetH);
+  const sw = Math.max(1, source.width || 320);
+  const sh = Math.max(1, source.height || 200);
+  const rawAspect = sw / sh;
+  const intendedAspect = Math.abs(rawAspect - 1.6) < 0.12 ? 4 / 3 : rawAspect;
+  const targetAspect = targetW / targetH;
+  let dw = targetW;
+  let dh = targetH;
+  if (intendedAspect > targetAspect) dh = targetW / intendedAspect;
+  else dw = targetH * intendedAspect;
+  const dx = (targetW - dw) / 2;
+  const dy = (targetH - dh) / 2;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0, sw, sh, dx, dy, dw, dh);
+  ctx.restore();
+  return { dx, dy, dw, dh, sw, sh };
+}
+
+function renderGameView() {
+  if (!state.gameReady) {
+    gameViewCtx.fillStyle = '#000';
+    gameViewCtx.fillRect(0, 0, gameViewCanvas.width, gameViewCanvas.height);
+    return;
+  }
+  drawFullFrame(engineCanvas, gameViewCtx, gameViewCanvas.width, gameViewCanvas.height);
+}
 
 async function enterFullscreen() {
   try {
@@ -142,8 +183,8 @@ function setupBrain() {
     state.brainCount = 4000;
     const pos = new Float32Array(state.brainCount * 3);
     for (let i = 0; i < state.brainCount; i++) {
-      pos[i * 3] = Math.sin(i * .17) * 80 + Math.sin(i * .013) * 25;
-      pos[i * 3 + 1] = Math.cos(i * .11) * 55 + Math.cos(i * .021) * 18;
+      pos[i * 3] = Math.sin(i * 0.17) * 80 + Math.sin(i * .013) * 25;
+      pos[i * 3 + 1] = Math.cos(i * 0.11) * 55 + Math.cos(i * .021) * 18;
       pos[i * 3 + 2] = Math.sin(i * .07) * 20;
     }
     state.brainPositions = pos;
@@ -181,66 +222,120 @@ setupBrain();
 
 function fakeBrain(now) {
   const t = now / 1000;
-  const high = state.vision.cells.length
-    ? state.vision.cells.slice(0, Math.ceil(state.vision.cells.length / 2)).reduce((s, c) => s + c.drive, 0) / Math.ceil(state.vision.cells.length / 2)
-    : 0;
-  const low = state.vision.cells.length
-    ? state.vision.cells.slice(Math.floor(state.vision.cells.length / 2)).reduce((s, c) => s + c.drive, 0) / Math.ceil(state.vision.cells.length / 2)
-    : 0;
+  const left = state.vision.left, right = state.vision.right, center = state.vision.center;
+  const threat = state.vision.threat;
+  const turn = clamp((right - left) * 5 + Math.sin(t) * .08, -1, 1);
   state.brainFrame = {
     t_ms: now,
-    active_neurons: 650 + Math.round(state.vision.motion * 5000),
-    mean_rate_hz: 2 + state.vision.motion * 24,
+    active_neurons: 700 + Math.round((center + threat) * 3000),
+    mean_rate_hz: 2 + center * 14 + threat * 18,
     channels: {
-      turn_bias: clamp((low - high) * 2, -1, 1),
-      escape_takeoff: clamp(high * 1.8, 0, 1),
-      escape_long_mode: clamp(state.vision.motion * .8, 0, 1),
-      stop_freeze: clamp(.06 - state.vision.motion * .03, 0, 1),
-      backward_walk: 0,
+      turn_bias: turn,
+      escape_takeoff: clamp(center * .25 + threat * .85, 0, 1),
+      escape_long_mode: clamp(center * .15 + threat * .55, 0, 1),
+      stop_freeze: clamp(.04 + threat * .38, 0, 1),
+      backward_walk: .03,
     },
-    dn_rates: { DN_left: 18 + high * 80, DN_right: 18 + low * 80, DN_escape: state.vision.motion * 120 },
+    dn_rates: { DN_left: 18 + left * 90, DN_right: 18 + right * 90, DN_escape: center * 70 + threat * 140 },
     proboscis_drive: 0,
     active_idx: Array.from({ length: 700 }, (_, i) => (i * 37 + Math.floor(t * 50)) % state.brainCount),
   };
   updateBrainUI();
 }
 
-function renderFlyView(cells, stimuli, motion) {
+function bestHorizontalShift(current, previous, x0, x1, maxShift = 3) {
+  const w = featureCanvas.width;
+  const h = featureCanvas.height;
+  let bestDx = 0;
+  let bestError = Infinity;
+  for (let dx = -maxShift; dx <= maxShift; dx++) {
+    let error = 0;
+    let count = 0;
+    const start = Math.max(x0, -dx);
+    const end = Math.min(x1, w - dx);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = start; x < end; x++) {
+        error += Math.abs(current[row + x] - previous[row + x + dx]) / 255;
+        count++;
+      }
+    }
+    error /= Math.max(1, count);
+    if (error < bestError) { bestError = error; bestDx = dx; }
+  }
+  return { dx: bestDx, error: bestError };
+}
+
+function sceneSignature(gray) {
+  const w = featureCanvas.width;
+  const h = featureCanvas.height;
+  const cols = 6;
+  const rows = 4;
+  let out = '';
+  for (let gy = 0; gy < rows; gy++) {
+    for (let gx = 0; gx < cols; gx++) {
+      const x0 = Math.floor(gx * w / cols), x1 = Math.floor((gx + 1) * w / cols);
+      const y0 = Math.floor(gy * h / rows), y1 = Math.floor((gy + 1) * h / rows);
+      let sum = 0, count = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) { sum += gray[y * w + x]; count++; }
+      }
+      out += Math.min(7, Math.floor((sum / Math.max(1, count)) / 32)).toString(8);
+    }
+  }
+  return out;
+}
+
+function renderFlyView(cells, stimuli, rotation, forwardFlow, threat) {
   const w = retinaCanvas.width;
   const h = retinaCanvas.height;
   retinaCtx.fillStyle = '#020403';
   retinaCtx.fillRect(0, 0, w, h);
+  const fieldAspect = H_FOV_DEG / V_FOV_DEG;
+  const targetAspect = w / h;
+  let fw = w, fh = h;
+  if (fieldAspect > targetAspect) fh = w / fieldAspect;
+  else fw = h * fieldAspect;
+  const ox = (w - fw) / 2;
+  const oy = (h - fh) / 2;
+  const cellW = fw / GRID_COLS;
+  const cellH = fh / GRID_ROWS;
 
-  const cellW = w / GRID_COLS;
-  const cellH = h / GRID_ROWS;
   for (const cell of cells) {
-    const cx = (cell.gx + .5) * cellW;
-    const cy = (cell.gy + .5) * cellH;
+    const cx = ox + (cell.gx + .5) * cellW;
+    const cy = oy + (cell.gy + .5) * cellH;
     const base = Math.round(clamp(cell.adapted * 255, 0, 255));
     const drive = clamp(cell.drive, 0, 1);
-    const radius = Math.min(cellW, cellH) * .32;
+    const localThreat = clamp(cell.threat || 0, 0, 1);
+    const radius = Math.min(cellW, cellH) * .38;
     retinaCtx.beginPath();
     retinaCtx.arc(cx, cy, radius, 0, Math.PI * 2);
-    retinaCtx.fillStyle = `rgb(${Math.round(base * .34)}, ${Math.round(base * .42 + drive * 150)}, ${Math.round(base * .34)})`;
+    const rr = Math.round(base * .32 + localThreat * 150);
+    const gg = Math.round(base * .46 + drive * 105);
+    const bb = Math.round(base * .32);
+    retinaCtx.fillStyle = `rgb(${rr}, ${gg}, ${bb})`;
     retinaCtx.fill();
-    retinaCtx.strokeStyle = 'rgba(220,255,230,.10)';
+    retinaCtx.strokeStyle = localThreat > .25 ? `rgba(255,155,130,${.18 + localThreat * .65})` : 'rgba(220,255,230,.08)';
+    retinaCtx.lineWidth = localThreat > .25 ? 2 : 1;
     retinaCtx.stroke();
   }
 
   for (const s of stimuli) {
-    const x = (s.azimuth_deg / H_FOV_DEG + .5) * w;
-    const y = (.5 - s.elevation_deg / V_FOV_DEG) * h;
-    const r = 5 + s.strength * 15;
+    const x = ox + (s.azimuth_deg / H_FOV_DEG + .5) * fw;
+    const y = oy + (.5 - s.elevation_deg / V_FOV_DEG) * fh;
+    const r = 5 + s.strength * 22;
     retinaCtx.beginPath();
     retinaCtx.arc(x, y, r, 0, Math.PI * 2);
-    retinaCtx.strokeStyle = `rgba(215,255,138,${.28 + s.strength * .68})`;
-    retinaCtx.lineWidth = 2 + s.strength * 3;
+    retinaCtx.strokeStyle = `rgba(255,155,130,${.3 + s.strength * .68})`;
+    retinaCtx.lineWidth = 2 + s.strength * 4;
     retinaCtx.stroke();
   }
 
-  retinaCtx.fillStyle = 'rgba(220,230,226,.72)';
-  retinaCtx.font = '16px ui-monospace, monospace';
-  retinaCtx.fillText(`visual motion ${motion.toFixed(3)}`, 12, h - 16);
+  retinaCtx.strokeStyle = 'rgba(220,230,226,.15)';
+  retinaCtx.strokeRect(ox + .5, oy + .5, fw - 1, fh - 1);
+  retinaCtx.fillStyle = threat > .35 ? 'rgba(255,165,145,.92)' : 'rgba(220,230,226,.72)';
+  retinaCtx.font = '18px ui-monospace, monospace';
+  retinaCtx.fillText(`rot ${rotation.toFixed(2)}  forward ${forwardFlow.toFixed(2)}  threat ${threat.toFixed(2)}`, ox + 12, oy + fh - 14);
 }
 
 function sampleVision() {
@@ -248,7 +343,7 @@ function sampleVision() {
   try {
     const w = featureCanvas.width;
     const h = featureCanvas.height;
-    featureCtx.drawImage(gameCanvas, 0, 0, gameCanvas.width, gameCanvas.height, 0, 0, w, h);
+    drawFullFrame(engineCanvas, featureCtx, w, h);
     const data = featureCtx.getImageData(0, 0, w, h).data;
     const gray = new Uint8Array(w * h);
     if (!state.adaptation || state.adaptation.length !== gray.length) state.adaptation = new Float32Array(gray.length);
@@ -262,135 +357,214 @@ function sampleVision() {
     }
     brightness /= gray.length;
 
-    const sums = new Float64Array(GRID_COLS * GRID_ROWS);
-    const adaptedSums = new Float64Array(GRID_COLS * GRID_ROWS);
-    const counts = new Uint32Array(GRID_COLS * GRID_ROWS);
-    let left = 0, center = 0, right = 0, motion = 0;
-    let lcount = 0, ccount = 0, rcount = 0;
-    const cells = [];
+    let left = 0, center = 0, right = 0, novelty = 0, rotation = 0, forwardFlow = 0, translation = 0;
+    let darkOnset = 0, threat = 0;
     let stimuli = [];
+    const cells = [];
 
     if (state.previousPixels) {
+      const global = bestHorizontalShift(gray, state.previousPixels, 0, w, 3);
+      const zero = bestHorizontalShift(gray, state.previousPixels, 0, w, 0);
+      const leftShift = bestHorizontalShift(gray, state.previousPixels, 0, Math.floor(w / 2), 2);
+      const rightShift = bestHorizontalShift(gray, state.previousPixels, Math.floor(w / 2), w, 2);
+      const coherence = zero.error > .001 ? clamp((zero.error - global.error) / zero.error, 0, 1) : 0;
+      rotation = clamp(Math.abs(global.dx) / 3 * coherence, 0, 1);
+      forwardFlow = clamp(Math.max(0, leftShift.dx - rightShift.dx) / 4 * (1 - rotation * .75), 0, 1);
+
+      const sums = new Float64Array(GRID_COLS * GRID_ROWS);
+      const darkSums = new Float64Array(GRID_COLS * GRID_ROWS);
+      const adaptedSums = new Float64Array(GRID_COLS * GRID_ROWS);
+      const counts = new Uint32Array(GRID_COLS * GRID_ROWS);
+      let residualTotal = 0, residualCount = 0, darkTotal = 0;
+      let lsum = 0, lcount = 0, csum = 0, ccount = 0, rsum = 0, rcount = 0;
+
       for (let y = 0; y < h; y++) {
         const gy = Math.min(GRID_ROWS - 1, Math.floor(y * GRID_ROWS / h));
         for (let x = 0; x < w; x++) {
+          const prevX = x + global.dx;
+          if (prevX < 0 || prevX >= w) continue;
           const p = y * w + x;
+          const previousAdapted = state.adaptation[p];
           const current = gray[p] / 255;
-          const frameMotion = Math.abs(gray[p] - state.previousPixels[p]) / 255;
-          const temporalContrast = Math.abs(current - state.adaptation[p]);
-          const residual = frameMotion * .82 + temporalContrast * .18;
-          state.adaptation[p] += (current - state.adaptation[p]) * .06;
+          const motion = Math.abs(gray[p] - state.previousPixels[y * w + prevX]) / 255;
+          const temporalContrast = Math.abs(current - previousAdapted);
+          const localDarkOnset = Math.max(0, previousAdapted - current);
+          const residual = motion * .66 + temporalContrast * .17 + localDarkOnset * .17;
+          state.adaptation[p] += (current - state.adaptation[p]) * .05;
 
           const gx = Math.min(GRID_COLS - 1, Math.floor(x * GRID_COLS / w));
           const gi = gy * GRID_COLS + gx;
           sums[gi] += residual;
+          darkSums[gi] += localDarkOnset;
           adaptedSums[gi] += current;
           counts[gi]++;
-          motion += residual;
-
-          if (x < w / 3) { left += residual; lcount++; }
-          else if (x < w * 2 / 3) { center += residual; ccount++; }
-          else { right += residual; rcount++; }
+          residualTotal += residual;
+          darkTotal += localDarkOnset;
+          residualCount++;
+          if (x < w / 3) { lsum += residual; lcount++; }
+          else if (x < w * 2 / 3) { csum += residual; ccount++; }
+          else { rsum += residual; rcount++; }
         }
       }
 
-      left /= Math.max(1, lcount);
-      center /= Math.max(1, ccount);
-      right /= Math.max(1, rcount);
-      motion /= gray.length;
+      left = lsum / Math.max(1, lcount);
+      center = csum / Math.max(1, ccount);
+      right = rsum / Math.max(1, rcount);
+      novelty = residualTotal / Math.max(1, residualCount);
+      darkOnset = darkTotal / Math.max(1, residualCount);
+      translation = clamp((novelty * 2.0 + forwardFlow * .9) * (1 - rotation * .7), 0, 1);
+
+      // Threat is deliberately dominated by expansion and sudden darkening, not camera spin.
+      const nonRotating = 1 - rotation * .82;
+      threat = clamp((forwardFlow * 1.25 + darkOnset * 5.2 + center * 1.4) * nonRotating, 0, 1);
+      const rotationGate = 1 - rotation * .84;
 
       for (let gy = 0; gy < GRID_ROWS; gy++) {
         for (let gx = 0; gx < GRID_COLS; gx++) {
           const gi = gy * GRID_COLS + gx;
           const local = sums[gi] / Math.max(1, counts[gi]);
+          const localDark = darkSums[gi] / Math.max(1, counts[gi]);
           const adapted = adaptedSums[gi] / Math.max(1, counts[gi]);
-          const drive = clamp((local - .0045) * 9.5, 0, 1);
-          cells.push({ gx, gy, adapted, drive });
-          if (drive < .035) continue;
+          const localThreat = clamp((localDark * 6.0 + forwardFlow * .72 + Math.max(0, local - .006) * 7.0) * rotationGate, 0, 1);
+          const drive = clamp(((local - .006) * 9.0 + forwardFlow * .48 + localDark * 3.6) * rotationGate, 0, 1);
+          cells.push({ gx, gy, adapted, drive, threat: localThreat });
+          const stimulusStrength = clamp(Math.max(drive, localThreat) * (1 + threat * .55), 0, 1);
+          if (stimulusStrength < .035) continue;
           stimuli.push({
             azimuth_deg: ((gx + .5) / GRID_COLS - .5) * H_FOV_DEG,
             elevation_deg: (.5 - (gy + .5) / GRID_ROWS) * V_FOV_DEG,
-            strength: drive,
+            strength: stimulusStrength,
+            threat: localThreat,
           });
         }
       }
       stimuli.sort((a, b) => b.strength - a.strength);
-      stimuli = stimuli.slice(0, 12);
+      stimuli = stimuli.slice(0, 14);
     } else {
       for (let p = 0; p < gray.length; p++) state.adaptation[p] = gray[p] / 255;
       for (let gy = 0; gy < GRID_ROWS; gy++) {
-        for (let gx = 0; gx < GRID_COLS; gx++) cells.push({ gx, gy, adapted: .08, drive: 0 });
+        for (let gx = 0; gx < GRID_COLS; gx++) cells.push({ gx, gy, adapted: .08, drive: 0, threat: 0 });
       }
     }
 
+    const signature = sceneSignature(gray);
+    const priorVisits = state.sceneVisits.get(signature) || 0;
+    const recentMatches = state.recentSignatures.reduce((n, s) => n + (s === signature ? 1 : 0), 0);
+    state.sceneVisits.set(signature, priorVisits + 1);
+    state.recentSignatures.push(signature);
+    if (state.recentSignatures.length > 90) state.recentSignatures.shift();
+    const sceneNewness = priorVisits === 0 ? 1 : 1 / Math.sqrt(priorVisits + 1);
+    const loopScore = clamp((recentMatches - 2) / 8, 0, 1);
+
     state.previousPixels = gray;
-    state.vision = { left, center, right, motion, brightness, stimuli, cells };
-    renderFlyView(cells, stimuli, motion);
+    state.vision = {
+      left, center, right, novelty, brightness, rotation, translation, forwardFlow,
+      sceneNewness, loopScore, darkOnset, threat, stimuli, cells,
+    };
+
+    renderFlyView(cells, stimuli, rotation, forwardFlow, threat);
     ui.ml.textContent = left.toFixed(3);
     ui.mc.textContent = center.toFixed(3);
     ui.mr.textContent = right.toFixed(3);
-    ui.novelty.textContent = motion.toFixed(3);
-    ui.vision.textContent = `full-frame drive · ${stimuli.length} active receptive fields`;
-
+    ui.novelty.textContent = forwardFlow.toFixed(3);
+    ui.threat.textContent = threat.toFixed(3);
+    ui.vision.textContent = `full-frame looming drive · ${stimuli.length} active fields · threat ${threat.toFixed(2)}`;
     if (brain && state.brainReady) brain.postMessage({ cmd: 'vision', vision: state.vision });
   } catch (error) {
     console.error('vision sample failed', error);
   }
 }
 
-function reinforcementFromEvents(events) {
-  let reward = 0.004;
-  let terminal = null;
-  let passed = false;
+function reward(now) {
+  const v = state.vision;
+  const action = ACTIONS[state.actionIndex].name;
+  const turning = action.includes('left') || action.includes('right');
+  const forward = action.startsWith('forward');
+  const progress = clamp(v.forwardFlow * (1 - v.rotation), 0, 1);
+  const usefulTranslation = clamp(v.translation * (1 - v.rotation), 0, 1);
+  const turnDuration = turning && state.turningSince ? now - state.turningSince : 0;
 
-  for (const event of events) {
-    if (event.type === 'pipe') {
-      passed = true;
-      reward += 12;
-      if (event.score > state.bestScore) {
-        state.bestScore = event.score;
-        ui.bestScore.textContent = String(state.bestScore);
-        reward += 6;
-      }
-    }
-    if (event.type === 'death') {
-      reward -= 30;
-      terminal = 'collision';
-    }
+  let r = .002;
+  r += progress * .18;
+  r += usefulTranslation * .045;
+  if (forward && progress > .025) r += .035 * progress;
+  if (progress > .03 && v.sceneNewness > .55 && v.rotation < .22) r += .09 * v.sceneNewness * progress;
+
+  // Looming/shadow exposure is an aversive environmental signal; escaping it is preferable.
+  r -= .08 * v.threat;
+  r -= .16 * v.rotation;
+  if (turning) {
+    const spinWithoutProgress = clamp(v.rotation * 1.6, 0, 1) * (1 - progress);
+    r -= .22 * spinWithoutProgress;
+    if (turnDuration > 700) r -= Math.min(.28, ((turnDuration - 700) / 5000) * .28) * (1 - progress);
   }
 
-  return { reward, terminal, passed };
+  const circleEvidence = v.loopScore * clamp(v.rotation * 1.4 + (turning ? .35 : 0), 0, 1) * (1 - progress);
+  r -= .38 * circleEvidence;
+  if (v.loopScore > .55 && progress < .02) r -= .10;
+  if (action === 'idle') r -= .018;
+
+  const usefulMotion = Math.max(progress, usefulTranslation);
+  if (usefulMotion < .012) {
+    const still = now - state.stillSince;
+    if (still > 1200) r -= Math.min(.25, (still - 1200) / 14000 * .25);
+  } else {
+    state.stillSince = now;
+  }
+
+  return clamp(r, -.75, .35);
+}
+
+function terminal(now) {
+  const elapsed = now - state.episodeStartedAt;
+  const still = now - state.stillSince;
+  const action = ACTIONS[state.actionIndex].name;
+  const turning = action.includes('left') || action.includes('right');
+  const turnDuration = turning && state.turningSince ? now - state.turningSince : 0;
+  if (turnDuration > 7000 && state.vision.loopScore > .45 && state.vision.forwardFlow < .025) return 'circling-loss-proxy';
+  if (elapsed > 12000 && still > 5000 && state.vision.translation < .01) return 'loss-proxy';
+  if (elapsed > 120000 && state.episodeReward > 4) return 'survival-win-proxy';
+  return null;
 }
 
 function resetEpisode(kind) {
   ui.terminal.textContent = kind;
   state.bestReward = Math.max(state.bestReward, state.episodeReward);
-  ui.bestReward.textContent = state.bestReward.toFixed(2);
-  state.episodeScores.push(state.game.score);
-  if (state.episodeScores.length > 200) state.episodeScores.shift();
+  ui.best.textContent = state.bestReward.toFixed(2);
   state.episode++;
   state.episodeReward = 0;
   state.previousPixels = null;
   state.adaptation = null;
   state.previousFeatures = null;
-  state.actionIndex = 1;
-  state.actionUntil = 0;
-  state.game.respawn();
+  state.sceneVisits.clear();
+  state.recentSignatures = [];
+  state.turnDirection = 0;
+  state.turningSince = 0;
+  state.episodeStartedAt = performance.now();
+  state.stillSince = performance.now();
   ui.episode.textContent = state.episode.toLocaleString();
-  ui.score.textContent = '0';
-  ui.reward.textContent = '0.00';
+  state.game.respawn();
   if (brain) brain.postMessage({ cmd: 'reset', seed: state.episode * 17 });
   persistExperiment();
-  setTimeout(() => { ui.terminal.textContent = 'none'; }, 900);
+  setTimeout(() => { ui.terminal.textContent = 'none'; }, 1200);
 }
 
 function setAction(index) {
   state.actionIndex = index;
   state.game.act(index);
   const name = ACTIONS[index].name;
+  const direction = name.includes('left') ? -1 : name.includes('right') ? 1 : 0;
+  if (direction === 0) {
+    state.turnDirection = 0;
+    state.turningSince = 0;
+  } else if (direction !== state.turnDirection) {
+    state.turnDirection = direction;
+    state.turningSince = performance.now();
+  }
   ui.action.textContent = name;
-  ui.bars.flap.style.width = name === 'flap' ? '100%' : '0%';
-  ui.bars.coast.style.width = name === 'coast' ? '100%' : '0%';
+  for (const [key, bar] of Object.entries(ui.bars)) {
+    bar.style.width = (name.includes(key) || (key === 'forward' && name.startsWith('forward'))) ? '100%' : '0%';
+  }
 }
 
 function control(now) {
@@ -399,18 +573,15 @@ function control(now) {
   if (!TEST && (!state.brainReady || !Number.isFinite(state.brainFrame.t_ms) || state.brainFrame.t_ms <= 0)) return;
 
   const x = neuralFeatures(state.brainFrame);
-  const events = state.game.consumeEvents();
-  const outcome = reinforcementFromEvents(events);
-  const r = outcome.reward;
-  const end = outcome.terminal;
-
+  let r = reward(now);
+  const end = terminal(now);
+  if (end) r += end === 'survival-win-proxy' ? 50 : -30;
   if (state.previousFeatures) learner.update(state.previousFeatures, state.actionIndex, r, x, Boolean(end));
   state.previousFeatures = x;
   state.episodeReward += r;
   state.rewards.push(r);
-  if (state.rewards.length > 2400) state.rewards.splice(0, 600);
+  if (state.rewards.length > 2000) state.rewards.splice(0, 500);
 
-  ui.score.textContent = String(state.game.score);
   ui.step.textContent = r.toFixed(3);
   ui.reward.textContent = state.episodeReward.toFixed(2);
   ui.epsilon.textContent = learner.epsilon.toFixed(3);
@@ -420,7 +591,7 @@ function control(now) {
   if (now >= state.actionUntil) {
     const prior = neuralActionPrior(state.brainFrame, ACTIONS.length);
     setAction(learner.choose(x, prior));
-    state.actionUntil = now + 90 + Math.random() * 70;
+    state.actionUntil = now + 120 + Math.random() * 140;
   }
 }
 
@@ -436,15 +607,10 @@ function updateBrainUI() {
 
 function drawBrain() {
   const c = brainCtx, w = brainCanvas.width, h = brainCanvas.height;
-  c.fillStyle = '#080b0a';
-  c.fillRect(0, 0, w, h);
+  c.fillStyle = '#080b0a'; c.fillRect(0, 0, w, h);
   if (!state.brainPositions || !state.brainFrame.active_idx) {
-    c.fillStyle = '#697570';
-    c.font = '12px monospace';
-    c.fillText('loading connectome…', 18, 28);
-    return;
+    c.fillStyle = '#697570'; c.font = '12px monospace'; c.fillText('loading connectome…', 18, 28); return;
   }
-
   const p = state.brainPositions, n = state.brainCount;
   const stride = Math.max(1, Math.floor(n / 4500));
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -457,31 +623,23 @@ function drawBrain() {
   const scale = Math.min((w - 40) / Math.max(1, maxX - minX), (h - 40) / Math.max(1, maxY - minY));
   const xy = (i) => [20 + (p[i * 3] - minX) * scale, 20 + (p[i * 3 + 1] - minY) * scale];
   c.fillStyle = 'rgba(158,171,166,.12)';
-  for (let i = 0; i < n; i += stride) {
-    const [x, y] = xy(i);
-    c.fillRect(x, y, 1, 1);
-  }
+  for (let i = 0; i < n; i += stride) { const [x, y] = xy(i); c.fillRect(x, y, 1, 1); }
   c.fillStyle = '#d7ff8a';
   for (const i of state.brainFrame.active_idx) {
     if (i >= n) continue;
-    const [x, y] = xy(i);
-    c.fillRect(x - 1, y - 1, 2.5, 2.5);
+    const [x, y] = xy(i); c.fillRect(x - 1, y - 1, 2.5, 2.5);
   }
 }
 
 function drawReward() {
   const c = rewardCtx, w = rewardCanvas.width, h = rewardCanvas.height;
-  c.fillStyle = '#090c0b';
-  c.fillRect(0, 0, w, h);
-  c.strokeStyle = '#1f2825';
-  c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
-  const v = state.rewards.slice(-260);
+  c.fillStyle = '#090c0b'; c.fillRect(0, 0, w, h);
+  c.strokeStyle = '#1f2825'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
+  const v = state.rewards.slice(-240);
   if (v.length < 2) return;
-  let lo = Math.min(-30, ...v), hi = Math.max(18, ...v);
+  let lo = Math.min(-.25, ...v), hi = Math.max(.25, ...v);
   if (hi - lo < 1e-6) hi = lo + 1;
-  c.strokeStyle = '#d7ff8a';
-  c.lineWidth = 1.5;
-  c.beginPath();
+  c.strokeStyle = '#d7ff8a'; c.lineWidth = 1.5; c.beginPath();
   v.forEach((r, i) => {
     const x = i / (v.length - 1) * w;
     const y = h - (r - lo) / (hi - lo) * h;
@@ -492,6 +650,7 @@ function drawReward() {
 
 function loop(now) {
   if (!state.running) return;
+  renderGameView();
   if (state.gameReady && now - state.lastControlAt > 100) {
     state.lastControlAt = now;
     control(now);
@@ -504,31 +663,33 @@ function loop(now) {
 async function start() {
   if (state.running) return;
   ui.start.disabled = true;
-  setStatus(ui.gameStatus, 'starting', 'warn');
+  setStatus(ui.gameStatus, 'booting', 'warn');
   try {
     await state.game.boot();
     state.gameReady = true;
-    state.game.setPaused(false);
+    renderGameView();
     state.running = true;
     state.episode = state.episode > 0 ? state.episode + 1 : 1;
     state.episodeReward = 0;
     state.previousPixels = null;
     state.adaptation = null;
     state.previousFeatures = null;
-    state.actionIndex = 1;
-    state.actionUntil = 0;
-    state.lastControlAt = performance.now();
+    state.sceneVisits.clear();
+    state.recentSignatures = [];
+    state.turnDirection = 0;
+    state.turningSince = 0;
+    state.episodeStartedAt = performance.now();
+    state.stillSince = performance.now();
     ui.episode.textContent = state.episode.toLocaleString();
-    ui.score.textContent = '0';
     ui.reward.textContent = '0.00';
     ui.overlay.hidden = true;
-    setStatus(ui.gameStatus, TEST ? 'mock brain running' : (state.restored ? 'running · history restored' : 'running'), 'ok');
+    setStatus(ui.gameStatus, TEST ? 'mock running' : (state.restored ? 'running · saved Doom learning restored' : 'running · threat mode'), 'ok');
     ui.pause.disabled = false;
     if (brain && state.brainReady) brain.postMessage({ cmd: 'play' });
     persistExperiment();
     state.raf = requestAnimationFrame(loop);
   } catch (error) {
-    setStatus(ui.gameStatus, 'start failed', 'error');
+    setStatus(ui.gameStatus, 'boot failed', 'error');
     ui.start.disabled = false;
     console.error(error);
   }
@@ -537,21 +698,23 @@ async function start() {
 ui.start.addEventListener('click', start);
 ui.fullscreen.addEventListener('click', enterFullscreen);
 ui.fullscreenExit.addEventListener('click', exitFullscreen);
-gameCanvas.addEventListener('dblclick', enterFullscreen);
+gameViewCanvas.addEventListener('dblclick', enterFullscreen);
 document.addEventListener('fullscreenchange', () => {
-  ui.fullscreen.textContent = document.fullscreenElement === gameWrap ? 'Fullscreen active' : 'Fullscreen game';
+  ui.fullscreen.textContent = document.fullscreenElement === gameWrap ? 'Fullscreen active' : 'Fullscreen gameplay';
+  requestAnimationFrame(renderGameView);
 });
 
 ui.pause.addEventListener('click', () => {
   state.running = !state.running;
   ui.pause.textContent = state.running ? 'Pause' : 'Resume';
-  state.game.setPaused(!state.running);
   if (brain) brain.postMessage({ cmd: state.running ? 'play' : 'pause' });
   if (state.running) {
     state.lastControlAt = performance.now();
     state.raf = requestAnimationFrame(loop);
   } else {
     cancelAnimationFrame(state.raf);
+    renderGameView();
+    setAction(ACTIONS.length - 1);
     persistExperiment();
   }
 });
@@ -559,18 +722,17 @@ ui.pause.addEventListener('click', () => {
 ui.reset.addEventListener('click', () => {
   learner.reset();
   state.bestReward = 0;
-  state.bestScore = 0;
   state.episode = 0;
   state.rewards = [];
-  state.episodeScores = [];
-  ui.bestReward.textContent = '0.00';
-  ui.bestScore.textContent = '0';
+  state.sceneVisits.clear();
+  state.recentSignatures = [];
+  ui.best.textContent = '0.00';
   ui.episode.textContent = '0';
   ui.epsilon.textContent = learner.epsilon.toFixed(3);
   ui.updates.textContent = '0';
   try {
     localStorage.removeItem(EXPERIMENT_KEY);
-    for (const key of LEGACY_EXPERIMENT_KEYS) localStorage.removeItem(key);
+    localStorage.removeItem(LEGACY_EXPERIMENT_KEY);
   } catch {}
   drawReward();
 });
@@ -580,9 +742,10 @@ window.addEventListener('beforeunload', persistExperiment);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') persistExperiment();
 });
-setInterval(() => { if (state.running) persistExperiment(); }, 4000);
+setInterval(() => { if (state.running) persistExperiment(); }, 5000);
 
-setStatus(ui.gameStatus, TEST ? 'test mode' : (state.restored ? 'saved history ready' : 'game idle'));
+setStatus(ui.gameStatus, TEST ? 'test mode' : (state.restored ? 'saved Doom history ready' : 'game idle'));
+renderGameView();
 drawBrain();
 drawReward();
 if (AUTO) setTimeout(() => ui.start.click(), 50);
