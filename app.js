@@ -4,7 +4,8 @@ import { LinearQLearner, neuralActionPrior, neuralFeatures } from './policy.js';
 const params = new URLSearchParams(location.search);
 const TEST = params.get('test') === '1';
 const AUTO = params.get('autostart') === '1';
-const EXPERIMENT_KEY = 'flybraindoom.experiment.v3';
+const EXPERIMENT_KEY = 'flybraindoom.experiment.v4';
+const LEGACY_EXPERIMENT_KEY = 'flybraindoom.experiment.v3';
 const GRID_COLS = 8;
 const GRID_ROWS = 4;
 const H_FOV_DEG = 90;
@@ -45,6 +46,7 @@ retinaCtx.imageSmoothingEnabled = true;
 
 const ui = {
   start: $('#start-button'), pause: $('#pause-button'), overlay: $('#game-overlay'),
+  fullscreen: $('#fullscreen-button'), fullscreenExit: $('#fullscreen-exit'),
   brainStatus: $('#brain-status'), gameStatus: $('#game-status'), episode: $('#episode'),
   reward: $('#reward'), best: $('#best-reward'), action: $('#action-label'),
   active: $('#active-neurons'), mean: $('#mean-rate'), turn: $('#turn-bias'),
@@ -68,7 +70,8 @@ const state = {
   previousFeatures: null,
   vision: {
     left: 0, center: 0, right: 0, novelty: 0, brightness: 0,
-    rotation: 0, translation: 0, forwardFlow: 0, sceneNewness: 0, stimuli: [], cells: [],
+    rotation: 0, translation: 0, forwardFlow: 0, sceneNewness: 0,
+    loopScore: 0, stimuli: [], cells: [],
   },
   episode: 0,
   episodeReward: 0,
@@ -81,6 +84,9 @@ const state = {
   rewards: [],
   raf: 0,
   sceneVisits: new Map(),
+  recentSignatures: [],
+  turnDirection: 0,
+  turningSince: 0,
   restored: false,
 };
 
@@ -94,8 +100,9 @@ const setStatus = (el, text, tone = '') => {
 
 function restoreExperiment() {
   try {
-    const saved = JSON.parse(localStorage.getItem(EXPERIMENT_KEY) || 'null');
-    if (!saved || saved.version !== 3) return;
+    let saved = JSON.parse(localStorage.getItem(EXPERIMENT_KEY) || 'null');
+    if (!saved) saved = JSON.parse(localStorage.getItem(LEGACY_EXPERIMENT_KEY) || 'null');
+    if (!saved) return;
     state.episode = Number.isFinite(saved.episode) ? Math.max(0, saved.episode | 0) : 0;
     state.bestReward = Number.isFinite(saved.bestReward) ? saved.bestReward : 0;
     state.rewards = Array.isArray(saved.rewards) ? saved.rewards.filter(Number.isFinite).slice(-500) : [];
@@ -107,7 +114,7 @@ function persistExperiment() {
   learner.persist();
   try {
     localStorage.setItem(EXPERIMENT_KEY, JSON.stringify({
-      version: 3,
+      version: 4,
       episode: state.episode,
       bestReward: state.bestReward,
       rewards: state.rewards.slice(-500),
@@ -126,7 +133,6 @@ function drawFullFrame(source, ctx, targetW, targetH) {
   ctx.save();
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, targetW, targetH);
-
   const sw = Math.max(1, source.width || 320);
   const sh = Math.max(1, source.height || 200);
   const rawAspect = sw / sh;
@@ -138,7 +144,6 @@ function drawFullFrame(source, ctx, targetW, targetH) {
   else dw = targetH * intendedAspect;
   const dx = (targetW - dw) / 2;
   const dy = (targetH - dh) / 2;
-
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(source, 0, 0, sw, sh, dx, dy, dw, dh);
   ctx.restore();
@@ -152,6 +157,25 @@ function renderGameView() {
     return;
   }
   drawFullFrame(engineCanvas, gameViewCtx, gameViewCanvas.width, gameViewCanvas.height);
+}
+
+async function enterFullscreen() {
+  try {
+    if (document.fullscreenElement === gameWrap) return;
+    if (gameWrap.requestFullscreen) await gameWrap.requestFullscreen({ navigationUI: 'hide' });
+    else if (gameWrap.webkitRequestFullscreen) gameWrap.webkitRequestFullscreen();
+  } catch (error) {
+    console.warn('fullscreen request failed', error);
+  }
+}
+
+async function exitFullscreen() {
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+    else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
+  } catch (error) {
+    console.warn('fullscreen exit failed', error);
+  }
 }
 
 function setupBrain() {
@@ -230,10 +254,7 @@ function bestHorizontalShift(current, previous, x0, x1, maxShift = 3) {
       }
     }
     error /= Math.max(1, count);
-    if (error < bestError) {
-      bestError = error;
-      bestDx = dx;
-    }
+    if (error < bestError) { bestError = error; bestDx = dx; }
   }
   return { dx: bestDx, error: bestError };
 }
@@ -250,10 +271,7 @@ function sceneSignature(gray) {
       const y0 = Math.floor(gy * h / rows), y1 = Math.floor((gy + 1) * h / rows);
       let sum = 0, count = 0;
       for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x++) {
-          sum += gray[y * w + x];
-          count++;
-        }
+        for (let x = x0; x < x1; x++) { sum += gray[y * w + x]; count++; }
       }
       out += Math.min(7, Math.floor((sum / Math.max(1, count)) / 32)).toString(8);
     }
@@ -266,7 +284,6 @@ function renderFlyView(cells, stimuli, rotation, forwardFlow) {
   const h = retinaCanvas.height;
   retinaCtx.fillStyle = '#020403';
   retinaCtx.fillRect(0, 0, w, h);
-
   const fieldAspect = H_FOV_DEG / V_FOV_DEG;
   const targetAspect = w / h;
   let fw = w, fh = h;
@@ -274,9 +291,9 @@ function renderFlyView(cells, stimuli, rotation, forwardFlow) {
   else fw = h * fieldAspect;
   const ox = (w - fw) / 2;
   const oy = (h - fh) / 2;
-
   const cellW = fw / GRID_COLS;
   const cellH = fh / GRID_ROWS;
+
   for (const cell of cells) {
     const cx = ox + (cell.gx + .5) * cellW;
     const cy = oy + (cell.gy + .5) * cellH;
@@ -339,7 +356,7 @@ function sampleVision() {
       const rightShift = bestHorizontalShift(gray, state.previousPixels, Math.floor(w / 2), w, 2);
       const coherence = zero.error > .001 ? clamp((zero.error - global.error) / zero.error, 0, 1) : 0;
       rotation = clamp(Math.abs(global.dx) / 3 * coherence, 0, 1);
-      forwardFlow = clamp(Math.max(0, leftShift.dx - rightShift.dx) / 4 * (1 - rotation * .65), 0, 1);
+      forwardFlow = clamp(Math.max(0, leftShift.dx - rightShift.dx) / 4 * (1 - rotation * .75), 0, 1);
 
       const sums = new Float64Array(GRID_COLS * GRID_ROWS);
       const adaptedSums = new Float64Array(GRID_COLS * GRID_ROWS);
@@ -358,7 +375,6 @@ function sampleVision() {
           const temporalContrast = Math.abs(current - state.adaptation[p]);
           const residual = motion * .78 + temporalContrast * .22;
           state.adaptation[p] += (current - state.adaptation[p]) * .055;
-
           const gx = Math.min(GRID_COLS - 1, Math.floor(x * GRID_COLS / w));
           const gi = gy * GRID_COLS + gx;
           sums[gi] += residual;
@@ -366,7 +382,6 @@ function sampleVision() {
           counts[gi]++;
           residualTotal += residual;
           residualCount++;
-
           if (x < w / 3) { lsum += residual; lcount++; }
           else if (x < w * 2 / 3) { csum += residual; ccount++; }
           else { rsum += residual; rcount++; }
@@ -377,9 +392,9 @@ function sampleVision() {
       center = csum / Math.max(1, ccount);
       right = rsum / Math.max(1, rcount);
       novelty = residualTotal / Math.max(1, residualCount);
-      translation = clamp(novelty * 3.2 + forwardFlow * .55, 0, 1);
+      translation = clamp((novelty * 2.2 + forwardFlow * .8) * (1 - rotation * .7), 0, 1);
+      const rotationGate = 1 - rotation * .88;
 
-      const rotationGate = 1 - rotation * .82;
       for (let gy = 0; gy < GRID_ROWS; gy++) {
         for (let gx = 0; gx < GRID_COLS; gx++) {
           const gi = gy * GRID_COLS + gx;
@@ -405,12 +420,19 @@ function sampleVision() {
     }
 
     const signature = sceneSignature(gray);
-    const visits = state.sceneVisits.get(signature) || 0;
-    state.sceneVisits.set(signature, visits + 1);
-    const sceneNewness = 1 / Math.sqrt(visits + 1);
+    const priorVisits = state.sceneVisits.get(signature) || 0;
+    const recentMatches = state.recentSignatures.reduce((n, s) => n + (s === signature ? 1 : 0), 0);
+    state.sceneVisits.set(signature, priorVisits + 1);
+    state.recentSignatures.push(signature);
+    if (state.recentSignatures.length > 90) state.recentSignatures.shift();
+    const sceneNewness = priorVisits === 0 ? 1 : 1 / Math.sqrt(priorVisits + 1);
+    const loopScore = clamp((recentMatches - 2) / 8, 0, 1);
 
     state.previousPixels = gray;
-    state.vision = { left, center, right, novelty, brightness, rotation, translation, forwardFlow, sceneNewness, stimuli, cells };
+    state.vision = {
+      left, center, right, novelty, brightness, rotation, translation, forwardFlow,
+      sceneNewness, loopScore, stimuli, cells,
+    };
 
     renderFlyView(cells, stimuli, rotation, forwardFlow);
     ui.ml.textContent = left.toFixed(3);
@@ -418,7 +440,6 @@ function sampleVision() {
     ui.mr.textContent = right.toFixed(3);
     ui.novelty.textContent = forwardFlow.toFixed(3);
     ui.vision.textContent = `full-frame LC4/LPLC2 drive · ${stimuli.length} active receptive fields`;
-
     if (brain && state.brainReady) brain.postMessage({ cmd: 'vision', vision: state.vision });
   } catch (error) {
     console.error('vision sample failed', error);
@@ -430,28 +451,52 @@ function reward(now) {
   const action = ACTIONS[state.actionIndex].name;
   const turning = action.includes('left') || action.includes('right');
   const forward = action.startsWith('forward');
-  let r = .0012;
-  r += Math.min(.012, v.translation * .018);
-  r += Math.min(.012, v.forwardFlow * .022);
-  if (v.translation > .018) r += Math.min(.006, v.sceneNewness * .006);
-  r -= Math.min(.024, v.rotation * .024);
-  if (turning && v.rotation > .30) r -= .007 * v.rotation;
-  if (forward && v.forwardFlow > .04) r += .004;
-  if (action === 'idle') r -= .0025;
+  const progress = clamp(v.forwardFlow * (1 - v.rotation), 0, 1);
+  const usefulTranslation = clamp(v.translation * (1 - v.rotation), 0, 1);
+  const turnDuration = turning && state.turningSince ? now - state.turningSince : 0;
 
-  const usefulMotion = Math.max(v.translation, v.forwardFlow);
+  let r = .002;
+  r += progress * .18;
+  r += usefulTranslation * .045;
+  if (forward && progress > .025) r += .035 * progress;
+  if (progress > .03 && v.sceneNewness > .55 && v.rotation < .22) {
+    r += .09 * v.sceneNewness * progress;
+  }
+
+  r -= .16 * v.rotation;
+  if (turning) {
+    const spinWithoutProgress = clamp(v.rotation * 1.6, 0, 1) * (1 - progress);
+    r -= .22 * spinWithoutProgress;
+    if (turnDuration > 700) {
+      r -= Math.min(.28, ((turnDuration - 700) / 5000) * .28) * (1 - progress);
+    }
+  }
+
+  const circleEvidence = v.loopScore * clamp(v.rotation * 1.4 + (turning ? .35 : 0), 0, 1) * (1 - progress);
+  r -= .38 * circleEvidence;
+  if (v.loopScore > .55 && progress < .02) r -= .10;
+  if (action === 'idle') r -= .018;
+
+  const usefulMotion = Math.max(progress, usefulTranslation);
   if (usefulMotion < .012) {
     const still = now - state.stillSince;
-    if (still > 1800) r -= Math.min(.04, (still - 1800) / 70000);
-  } else state.stillSince = now;
-  return r;
+    if (still > 1200) r -= Math.min(.25, (still - 1200) / 14000 * .25);
+  } else {
+    state.stillSince = now;
+  }
+
+  return clamp(r, -.65, .35);
 }
 
 function terminal(now) {
   const elapsed = now - state.episodeStartedAt;
   const still = now - state.stillSince;
-  if (elapsed > 14000 && still > 6000 && state.vision.translation < .01) return 'loss-proxy';
-  if (elapsed > 120000 && state.episodeReward > .35) return 'survival-win-proxy';
+  const action = ACTIONS[state.actionIndex].name;
+  const turning = action.includes('left') || action.includes('right');
+  const turnDuration = turning && state.turningSince ? now - state.turningSince : 0;
+  if (turnDuration > 7000 && state.vision.loopScore > .45 && state.vision.forwardFlow < .025) return 'circling-loss-proxy';
+  if (elapsed > 12000 && still > 5000 && state.vision.translation < .01) return 'loss-proxy';
+  if (elapsed > 120000 && state.episodeReward > 4) return 'survival-win-proxy';
   return null;
 }
 
@@ -465,6 +510,9 @@ function resetEpisode(kind) {
   state.adaptation = null;
   state.previousFeatures = null;
   state.sceneVisits.clear();
+  state.recentSignatures = [];
+  state.turnDirection = 0;
+  state.turningSince = 0;
   state.episodeStartedAt = performance.now();
   state.stillSince = performance.now();
   ui.episode.textContent = state.episode.toLocaleString();
@@ -478,6 +526,14 @@ function setAction(index) {
   state.actionIndex = index;
   state.game.act(index);
   const name = ACTIONS[index].name;
+  const direction = name.includes('left') ? -1 : name.includes('right') ? 1 : 0;
+  if (direction === 0) {
+    state.turnDirection = 0;
+    state.turningSince = 0;
+  } else if (direction !== state.turnDirection) {
+    state.turnDirection = direction;
+    state.turningSince = performance.now();
+  }
   ui.action.textContent = name;
   for (const [key, bar] of Object.entries(ui.bars)) {
     bar.style.width = (name.includes(key) || (key === 'forward' && name.startsWith('forward'))) ? '100%' : '0%';
@@ -492,7 +548,7 @@ function control(now) {
   const x = neuralFeatures(state.brainFrame);
   let r = reward(now);
   const end = terminal(now);
-  if (end) r += end === 'loss-proxy' ? -2.5 : 4;
+  if (end) r += end === 'survival-win-proxy' ? 50 : -30;
   if (state.previousFeatures) learner.update(state.previousFeatures, state.actionIndex, r, x, Boolean(end));
   state.previousFeatures = x;
   state.episodeReward += r;
@@ -528,7 +584,6 @@ function drawBrain() {
   if (!state.brainPositions || !state.brainFrame.active_idx) {
     c.fillStyle = '#697570'; c.font = '12px monospace'; c.fillText('loading connectome…', 18, 28); return;
   }
-
   const p = state.brainPositions, n = state.brainCount;
   const stride = Math.max(1, Math.floor(n / 4500));
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -555,7 +610,7 @@ function drawReward() {
   c.strokeStyle = '#1f2825'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
   const v = state.rewards.slice(-240);
   if (v.length < 2) return;
-  let lo = Math.min(-.05, ...v), hi = Math.max(.05, ...v);
+  let lo = Math.min(-.25, ...v), hi = Math.max(.25, ...v);
   if (hi - lo < 1e-6) hi = lo + 1;
   c.strokeStyle = '#d7ff8a'; c.lineWidth = 1.5; c.beginPath();
   v.forEach((r, i) => {
@@ -593,12 +648,15 @@ async function start() {
     state.adaptation = null;
     state.previousFeatures = null;
     state.sceneVisits.clear();
+    state.recentSignatures = [];
+    state.turnDirection = 0;
+    state.turningSince = 0;
     state.episodeStartedAt = performance.now();
     state.stillSince = performance.now();
     ui.episode.textContent = state.episode.toLocaleString();
     ui.reward.textContent = '0.00';
     ui.overlay.hidden = true;
-    setStatus(ui.gameStatus, TEST ? 'mock running' : (state.restored ? 'running · learning restored' : 'running'), 'ok');
+    setStatus(ui.gameStatus, TEST ? 'mock running' : (state.restored ? 'running · saved history restored' : 'running'), 'ok');
     ui.pause.disabled = false;
     if (brain && state.brainReady) brain.postMessage({ cmd: 'play' });
     persistExperiment();
@@ -611,6 +669,14 @@ async function start() {
 }
 
 ui.start.addEventListener('click', start);
+ui.fullscreen.addEventListener('click', enterFullscreen);
+ui.fullscreenExit.addEventListener('click', exitFullscreen);
+gameViewCanvas.addEventListener('dblclick', enterFullscreen);
+document.addEventListener('fullscreenchange', () => {
+  ui.fullscreen.textContent = document.fullscreenElement === gameWrap ? 'Fullscreen active' : 'Fullscreen gameplay';
+  requestAnimationFrame(renderGameView);
+});
+
 ui.pause.addEventListener('click', () => {
   state.running = !state.running;
   ui.pause.textContent = state.running ? 'Pause' : 'Resume';
@@ -632,11 +698,15 @@ ui.reset.addEventListener('click', () => {
   state.episode = 0;
   state.rewards = [];
   state.sceneVisits.clear();
+  state.recentSignatures = [];
   ui.best.textContent = '0.00';
   ui.episode.textContent = '0';
   ui.epsilon.textContent = learner.epsilon.toFixed(3);
   ui.updates.textContent = '0';
-  try { localStorage.removeItem(EXPERIMENT_KEY); } catch {}
+  try {
+    localStorage.removeItem(EXPERIMENT_KEY);
+    localStorage.removeItem(LEGACY_EXPERIMENT_KEY);
+  } catch {}
   drawReward();
 });
 
@@ -647,7 +717,7 @@ document.addEventListener('visibilitychange', () => {
 });
 setInterval(() => { if (state.running) persistExperiment(); }, 5000);
 
-setStatus(ui.gameStatus, TEST ? 'test mode' : (state.restored ? 'saved learning ready' : 'game idle'));
+setStatus(ui.gameStatus, TEST ? 'test mode' : (state.restored ? 'saved history ready' : 'game idle'));
 renderGameView();
 drawBrain();
 drawReward();
