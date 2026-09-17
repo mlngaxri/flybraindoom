@@ -22,6 +22,11 @@ export class DoomGame {
   }
 
   async boot() {
+    // Chocolate Doom renders a 320x200 framebuffer. Keep the backing store fixed
+    // and let CSS correct the historical non-square pixels to a 4:3 display.
+    this.canvas.width = 320;
+    this.canvas.height = 200;
+
     const createModule = (await import(`${DOOM_MODULE_BASE}chocolate-doom.js`)).default;
     const module = await createModule({
       canvas: this.canvas,
@@ -40,7 +45,19 @@ export class DoomGame {
     for (const dir of ['/config', '/savegames']) {
       try { module.FS.mkdir(dir); } catch {}
     }
-    module.FS.writeFile('/config/default.cfg', 'fullscreen 0\nwindow_width 320\nwindow_height 200\ngrabmouse 0\nuse_mouse 0\n');
+
+    // screenblocks 11 removes Doom's decorative tiled border and status bar.
+    // That matters here because the fly's camera should contain scene pixels,
+    // not a large static UI texture that can dominate the sensory encoder.
+    module.FS.writeFile('/config/default.cfg', [
+      'fullscreen 0',
+      'window_width 320',
+      'window_height 200',
+      'grabmouse 0',
+      'use_mouse 0',
+      'screenblocks 11',
+      'show_messages 0',
+    ].join('\n') + '\n');
     module.FS.writeFile('/config/chocolate-doom.cfg', 'smooth_pixel_scaling 0\nforce_software_renderer 1\n');
 
     const args = [
