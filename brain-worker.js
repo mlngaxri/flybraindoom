@@ -20,6 +20,7 @@ const send = (type, payload = {}, transfer = undefined) => {
   const message = { type, ...payload };
   transfer ? self.postMessage(message, transfer) : self.postMessage(message);
 };
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 async function loadModules() {
   const [engineMod, simMod] = await Promise.all([
@@ -131,49 +132,53 @@ function applyVision(vision) {
 
   session.clearStimuli();
 
-  // The front-end performs temporal adaptation and camera-rotation compensation,
-  // then sends the strongest local looming candidates. Each one is projected into
-  // the real LC4/LPLC2 receptive-field map by Fruit Fly Lab's LoomingEncoder.
+  // The front-end suppresses rotation and identifies rapid expansion, local motion,
+  // and sudden darkening. Strong threat events are projected as more urgent looming
+  // stimuli through the simulator's existing LC4/LPLC2 receptive-field encoder.
+  const globalThreat = clamp(Number(vision.threat) || 0, 0, 1);
+  const darkOnset = clamp(Number(vision.darkOnset) || 0, 0, 1);
   const candidates = Array.isArray(vision.stimuli)
     ? vision.stimuli
         .filter((s) => Number.isFinite(s?.strength) && s.strength > 0)
         .sort((a, b) => b.strength - a.strength)
-        .slice(0, 12)
+        .slice(0, 14)
     : [];
 
   if (candidates.length) {
     for (const s of candidates) {
-      const intensity = Math.max(0, Math.min(1, Number(s.strength) || 0));
-      if (intensity < 0.04) continue;
+      const localThreat = clamp(Number(s.threat) || 0, 0, 1);
+      const base = clamp(Number(s.strength) || 0, 0, 1);
+      const intensity = clamp(base * (1 + globalThreat * .55 + localThreat * .45), 0, 1);
+      if (intensity < 0.03) continue;
       session.addLooming({
-        azimuth_deg: Math.max(-85, Math.min(85, Number(s.azimuth_deg) || 0)),
-        elevation_deg: Math.max(-50, Math.min(50, Number(s.elevation_deg) || 0)),
-        half_size_mm: 2.2 + intensity * 8.5,
-        speed_mm_s: 45 + intensity * 430,
-        start_distance_mm: 42 + (1 - intensity) * 95,
-        max_half_angle_deg: 72,
+        azimuth_deg: clamp(Number(s.azimuth_deg) || 0, -85, 85),
+        elevation_deg: clamp(Number(s.elevation_deg) || 0, -50, 50),
+        half_size_mm: 3.2 + intensity * 12.5,
+        speed_mm_s: 90 + intensity * 820 + globalThreat * 220 + darkOnset * 180,
+        start_distance_mm: 28 + (1 - intensity) * 82,
+        max_half_angle_deg: 80,
       });
     }
     return;
   }
 
-  // Backwards-compatible fallback for old clients.
+  // Backwards-compatible fallback for clients that only provide coarse sectors.
   const sectors = [
     { key: 'left', azimuth_deg: -36 },
     { key: 'center', azimuth_deg: 0 },
     { key: 'right', azimuth_deg: 36 },
   ];
   for (const sector of sectors) {
-    const motion = Math.max(0, Math.min(1, Number(vision[sector.key]) || 0));
+    const motion = clamp(Number(vision[sector.key]) || 0, 0, 1);
     if (motion < 0.035) continue;
-    const intensity = Math.min(1, motion * 2.5);
+    const intensity = clamp(motion * 2.8 + globalThreat * .35, 0, 1);
     session.addLooming({
       azimuth_deg: sector.azimuth_deg,
       elevation_deg: 0,
-      half_size_mm: 3 + intensity * 9,
-      speed_mm_s: 70 + intensity * 520,
-      start_distance_mm: 32 + (1 - intensity) * 75,
-      max_half_angle_deg: 65,
+      half_size_mm: 3.5 + intensity * 11,
+      speed_mm_s: 90 + intensity * 720,
+      start_distance_mm: 30 + (1 - intensity) * 72,
+      max_half_angle_deg: 76,
     });
   }
 }
