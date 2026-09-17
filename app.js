@@ -1,8 +1,9 @@
 import { ACTIONS, DoomGame, MockGame } from './game.js';
 import { LinearQLearner, neuralActionPrior, neuralFeatures } from './policy.js';
 
-const TEST = new URLSearchParams(location.search).get('test') === '1';
-const AUTO = new URLSearchParams(location.search).get('autostart') === '1';
+const params = new URLSearchParams(location.search);
+const TEST = params.get('test') === '1';
+const AUTO = params.get('autostart') === '1';
 const EXPERIMENT_KEY = 'flybraindoom.experiment.v3';
 const GRID_COLS = 8;
 const GRID_ROWS = 4;
@@ -11,15 +12,36 @@ const V_FOV_DEG = 60;
 const $ = (s) => document.querySelector(s);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-const canvas = $('#doom-canvas');
+const engineCanvas = $('#doom-canvas');
+const gameWrap = engineCanvas.closest('.game-wrap');
+const gameViewCanvas = document.createElement('canvas');
+gameViewCanvas.id = 'game-view-canvas';
+gameViewCanvas.width = 960;
+gameViewCanvas.height = 720;
+gameViewCanvas.setAttribute('aria-label', 'Centered full Freedoom game view');
+gameWrap.insertBefore(gameViewCanvas, engineCanvas);
+engineCanvas.classList.add('engine-canvas');
+engineCanvas.setAttribute('aria-hidden', 'true');
+engineCanvas.tabIndex = -1;
+
 const featureCanvas = $('#feature-canvas');
+featureCanvas.width = 64;
+featureCanvas.height = 48;
 const retinaCanvas = $('#retina-canvas');
+retinaCanvas.width = 720;
+retinaCanvas.height = 480;
 const brainCanvas = $('#brain-canvas');
 const rewardCanvas = $('#reward-canvas');
+
+const gameViewCtx = gameViewCanvas.getContext('2d');
 const featureCtx = featureCanvas.getContext('2d', { willReadFrequently: true });
 const retinaCtx = retinaCanvas.getContext('2d');
 const brainCtx = brainCanvas.getContext('2d');
 const rewardCtx = rewardCanvas.getContext('2d');
+
+gameViewCtx.imageSmoothingEnabled = false;
+featureCtx.imageSmoothingEnabled = true;
+retinaCtx.imageSmoothingEnabled = true;
 
 const ui = {
   start: $('#start-button'), pause: $('#pause-button'), overlay: $('#game-overlay'),
@@ -34,7 +56,7 @@ const ui = {
 };
 
 const state = {
-  game: TEST ? new MockGame(canvas) : new DoomGame(canvas),
+  game: TEST ? new MockGame(engineCanvas) : new DoomGame(engineCanvas),
   running: false,
   gameReady: false,
   brainReady: false,
@@ -100,6 +122,38 @@ ui.best.textContent = state.bestReward.toFixed(2);
 ui.epsilon.textContent = learner.epsilon.toFixed(3);
 ui.updates.textContent = learner.updates.toLocaleString();
 
+function drawFullFrame(source, ctx, targetW, targetH) {
+  ctx.save();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, targetW, targetH);
+
+  const sw = Math.max(1, source.width || 320);
+  const sh = Math.max(1, source.height || 200);
+  const rawAspect = sw / sh;
+  const intendedAspect = Math.abs(rawAspect - 1.6) < 0.12 ? 4 / 3 : rawAspect;
+  const targetAspect = targetW / targetH;
+  let dw = targetW;
+  let dh = targetH;
+  if (intendedAspect > targetAspect) dh = targetW / intendedAspect;
+  else dw = targetH * intendedAspect;
+  const dx = (targetW - dw) / 2;
+  const dy = (targetH - dh) / 2;
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, 0, 0, sw, sh, dx, dy, dw, dh);
+  ctx.restore();
+  return { dx, dy, dw, dh, sw, sh };
+}
+
+function renderGameView() {
+  if (!state.gameReady) {
+    gameViewCtx.fillStyle = '#000';
+    gameViewCtx.fillRect(0, 0, gameViewCanvas.width, gameViewCanvas.height);
+    return;
+  }
+  drawFullFrame(engineCanvas, gameViewCtx, gameViewCanvas.width, gameViewCanvas.height);
+}
+
 function setupBrain() {
   if (TEST) {
     state.brainCount = 4000;
@@ -160,7 +214,7 @@ function fakeBrain(now) {
 
 function bestHorizontalShift(current, previous, x0, x1, maxShift = 3) {
   const w = featureCanvas.width;
-  const h = featureCanvas.height - 6;
+  const h = featureCanvas.height;
   let bestDx = 0;
   let bestError = Infinity;
   for (let dx = -maxShift; dx <= maxShift; dx++) {
@@ -186,7 +240,7 @@ function bestHorizontalShift(current, previous, x0, x1, maxShift = 3) {
 
 function sceneSignature(gray) {
   const w = featureCanvas.width;
-  const h = featureCanvas.height - 6;
+  const h = featureCanvas.height;
   const cols = 6;
   const rows = 4;
   let out = '';
@@ -213,11 +267,19 @@ function renderFlyView(cells, stimuli, rotation, forwardFlow) {
   retinaCtx.fillStyle = '#020403';
   retinaCtx.fillRect(0, 0, w, h);
 
-  const cellW = w / GRID_COLS;
-  const cellH = h / GRID_ROWS;
+  const fieldAspect = H_FOV_DEG / V_FOV_DEG;
+  const targetAspect = w / h;
+  let fw = w, fh = h;
+  if (fieldAspect > targetAspect) fh = w / fieldAspect;
+  else fw = h * fieldAspect;
+  const ox = (w - fw) / 2;
+  const oy = (h - fh) / 2;
+
+  const cellW = fw / GRID_COLS;
+  const cellH = fh / GRID_ROWS;
   for (const cell of cells) {
-    const cx = (cell.gx + .5) * cellW;
-    const cy = (cell.gy + .5) * cellH;
+    const cx = ox + (cell.gx + .5) * cellW;
+    const cy = oy + (cell.gy + .5) * cellH;
     const base = Math.round(clamp(cell.adapted * 255, 0, 255));
     const drive = clamp(cell.drive, 0, 1);
     const radius = Math.min(cellW, cellH) * .38;
@@ -230,19 +292,21 @@ function renderFlyView(cells, stimuli, rotation, forwardFlow) {
   }
 
   for (const s of stimuli) {
-    const x = (s.azimuth_deg / H_FOV_DEG + .5) * w;
-    const y = (.5 - s.elevation_deg / V_FOV_DEG) * h;
-    const r = 2 + s.strength * 7;
+    const x = ox + (s.azimuth_deg / H_FOV_DEG + .5) * fw;
+    const y = oy + (.5 - s.elevation_deg / V_FOV_DEG) * fh;
+    const r = 4 + s.strength * 18;
     retinaCtx.beginPath();
     retinaCtx.arc(x, y, r, 0, Math.PI * 2);
     retinaCtx.strokeStyle = `rgba(215,255,138,${.25 + s.strength * .7})`;
-    retinaCtx.lineWidth = 1 + s.strength * 2;
+    retinaCtx.lineWidth = 2 + s.strength * 3;
     retinaCtx.stroke();
   }
 
+  retinaCtx.strokeStyle = 'rgba(220,230,226,.15)';
+  retinaCtx.strokeRect(ox + .5, oy + .5, fw - 1, fh - 1);
   retinaCtx.fillStyle = 'rgba(220,230,226,.72)';
-  retinaCtx.font = '9px ui-monospace, monospace';
-  retinaCtx.fillText(`rot ${rotation.toFixed(2)}  forward ${forwardFlow.toFixed(2)}`, 7, h - 7);
+  retinaCtx.font = '18px ui-monospace, monospace';
+  retinaCtx.fillText(`rot ${rotation.toFixed(2)}  forward ${forwardFlow.toFixed(2)}`, ox + 12, oy + fh - 14);
 }
 
 function sampleVision() {
@@ -250,8 +314,7 @@ function sampleVision() {
   try {
     const w = featureCanvas.width;
     const h = featureCanvas.height;
-    const usableH = h - 6;
-    featureCtx.drawImage(canvas, 0, 0, w, h);
+    drawFullFrame(engineCanvas, featureCtx, w, h);
     const data = featureCtx.getImageData(0, 0, w, h).data;
     const gray = new Uint8Array(w * h);
     if (!state.adaptation || state.adaptation.length !== gray.length) state.adaptation = new Float32Array(gray.length);
@@ -267,7 +330,7 @@ function sampleVision() {
 
     let left = 0, center = 0, right = 0, novelty = 0, rotation = 0, forwardFlow = 0, translation = 0;
     let stimuli = [];
-    let cells = [];
+    const cells = [];
 
     if (state.previousPixels) {
       const global = bestHorizontalShift(gray, state.previousPixels, 0, w, 3);
@@ -284,8 +347,8 @@ function sampleVision() {
       let residualTotal = 0, residualCount = 0;
       let lsum = 0, lcount = 0, csum = 0, ccount = 0, rsum = 0, rcount = 0;
 
-      for (let y = 0; y < usableH; y++) {
-        const gy = Math.min(GRID_ROWS - 1, Math.floor(y * GRID_ROWS / usableH));
+      for (let y = 0; y < h; y++) {
+        const gy = Math.min(GRID_ROWS - 1, Math.floor(y * GRID_ROWS / h));
         for (let x = 0; x < w; x++) {
           const prevX = x + global.dx;
           if (prevX < 0 || prevX >= w) continue;
@@ -347,16 +410,14 @@ function sampleVision() {
     const sceneNewness = 1 / Math.sqrt(visits + 1);
 
     state.previousPixels = gray;
-    state.vision = {
-      left, center, right, novelty, brightness, rotation, translation, forwardFlow, sceneNewness, stimuli, cells,
-    };
+    state.vision = { left, center, right, novelty, brightness, rotation, translation, forwardFlow, sceneNewness, stimuli, cells };
 
     renderFlyView(cells, stimuli, rotation, forwardFlow);
     ui.ml.textContent = left.toFixed(3);
     ui.mc.textContent = center.toFixed(3);
     ui.mr.textContent = right.toFixed(3);
     ui.novelty.textContent = forwardFlow.toFixed(3);
-    ui.vision.textContent = `LC4/LPLC2 drive · ${stimuli.length} active receptive fields`;
+    ui.vision.textContent = `full-frame LC4/LPLC2 drive · ${stimuli.length} active receptive fields`;
 
     if (brain && state.brainReady) brain.postMessage({ cmd: 'vision', vision: state.vision });
   } catch (error) {
@@ -369,7 +430,6 @@ function reward(now) {
   const action = ACTIONS[state.actionIndex].name;
   const turning = action.includes('left') || action.includes('right');
   const forward = action.startsWith('forward');
-
   let r = .0012;
   r += Math.min(.012, v.translation * .018);
   r += Math.min(.012, v.forwardFlow * .022);
@@ -383,9 +443,7 @@ function reward(now) {
   if (usefulMotion < .012) {
     const still = now - state.stillSince;
     if (still > 1800) r -= Math.min(.04, (still - 1800) / 70000);
-  } else {
-    state.stillSince = now;
-  }
+  } else state.stillSince = now;
   return r;
 }
 
@@ -429,14 +487,12 @@ function setAction(index) {
 function control(now) {
   sampleVision();
   if (TEST) fakeBrain(now);
-
   if (!TEST && (!state.brainReady || !Number.isFinite(state.brainFrame.t_ms) || state.brainFrame.t_ms <= 0)) return;
 
   const x = neuralFeatures(state.brainFrame);
   let r = reward(now);
   const end = terminal(now);
   if (end) r += end === 'loss-proxy' ? -2.5 : 4;
-
   if (state.previousFeatures) learner.update(state.previousFeatures, state.actionIndex, r, x, Boolean(end));
   state.previousFeatures = x;
   state.episodeReward += r;
@@ -468,17 +524,12 @@ function updateBrainUI() {
 
 function drawBrain() {
   const c = brainCtx, w = brainCanvas.width, h = brainCanvas.height;
-  c.fillStyle = '#080b0a';
-  c.fillRect(0, 0, w, h);
+  c.fillStyle = '#080b0a'; c.fillRect(0, 0, w, h);
   if (!state.brainPositions || !state.brainFrame.active_idx) {
-    c.fillStyle = '#697570';
-    c.font = '12px monospace';
-    c.fillText('loading connectome…', 18, 28);
-    return;
+    c.fillStyle = '#697570'; c.font = '12px monospace'; c.fillText('loading connectome…', 18, 28); return;
   }
 
-  const p = state.brainPositions;
-  const n = state.brainCount;
+  const p = state.brainPositions, n = state.brainCount;
   const stride = Math.max(1, Math.floor(n / 4500));
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (let i = 0; i < n; i += stride) {
@@ -487,35 +538,26 @@ function drawBrain() {
     minX = Math.min(minX, x); maxX = Math.max(maxX, x);
     minY = Math.min(minY, y); maxY = Math.max(maxY, y);
   }
-
   const scale = Math.min((w - 40) / Math.max(1, maxX - minX), (h - 40) / Math.max(1, maxY - minY));
   const xy = (i) => [20 + (p[i * 3] - minX) * scale, 20 + (p[i * 3 + 1] - minY) * scale];
   c.fillStyle = 'rgba(158,171,166,.12)';
-  for (let i = 0; i < n; i += stride) {
-    const [x, y] = xy(i);
-    c.fillRect(x, y, 1, 1);
-  }
+  for (let i = 0; i < n; i += stride) { const [x, y] = xy(i); c.fillRect(x, y, 1, 1); }
   c.fillStyle = '#d7ff8a';
   for (const i of state.brainFrame.active_idx) {
     if (i >= n) continue;
-    const [x, y] = xy(i);
-    c.fillRect(x - 1, y - 1, 2.5, 2.5);
+    const [x, y] = xy(i); c.fillRect(x - 1, y - 1, 2.5, 2.5);
   }
 }
 
 function drawReward() {
   const c = rewardCtx, w = rewardCanvas.width, h = rewardCanvas.height;
-  c.fillStyle = '#090c0b';
-  c.fillRect(0, 0, w, h);
-  c.strokeStyle = '#1f2825';
-  c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
+  c.fillStyle = '#090c0b'; c.fillRect(0, 0, w, h);
+  c.strokeStyle = '#1f2825'; c.beginPath(); c.moveTo(0, h / 2); c.lineTo(w, h / 2); c.stroke();
   const v = state.rewards.slice(-240);
   if (v.length < 2) return;
   let lo = Math.min(-.05, ...v), hi = Math.max(.05, ...v);
   if (hi - lo < 1e-6) hi = lo + 1;
-  c.strokeStyle = '#d7ff8a';
-  c.lineWidth = 1.5;
-  c.beginPath();
+  c.strokeStyle = '#d7ff8a'; c.lineWidth = 1.5; c.beginPath();
   v.forEach((r, i) => {
     const x = i / (v.length - 1) * w;
     const y = h - (r - lo) / (hi - lo) * h;
@@ -526,6 +568,7 @@ function drawReward() {
 
 function loop(now) {
   if (!state.running) return;
+  renderGameView();
   if (state.gameReady && now - state.lastControlAt > 100) {
     state.lastControlAt = now;
     control(now);
@@ -542,6 +585,7 @@ async function start() {
   try {
     await state.game.boot();
     state.gameReady = true;
+    renderGameView();
     state.running = true;
     state.episode = state.episode > 0 ? state.episode + 1 : 1;
     state.episodeReward = 0;
@@ -576,6 +620,7 @@ ui.pause.addEventListener('click', () => {
     state.raf = requestAnimationFrame(loop);
   } else {
     cancelAnimationFrame(state.raf);
+    renderGameView();
     setAction(ACTIONS.length - 1);
     persistExperiment();
   }
@@ -600,11 +645,10 @@ window.addEventListener('beforeunload', persistExperiment);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') persistExperiment();
 });
-setInterval(() => {
-  if (state.running) persistExperiment();
-}, 5000);
+setInterval(() => { if (state.running) persistExperiment(); }, 5000);
 
 setStatus(ui.gameStatus, TEST ? 'test mode' : (state.restored ? 'saved learning ready' : 'game idle'));
+renderGameView();
 drawBrain();
 drawReward();
 if (AUTO) setTimeout(() => ui.start.click(), 50);
