@@ -22,7 +22,7 @@ if (!game.includes("{ name: 'idle' }") || !game.includes("{ name: 'left-swing' }
 if (!game.includes("const BLUE = '#43a8ff'") || !game.includes("const RED = '#ff4f67'")) throw new Error('Requested saber colours are missing.');
 if (!game.includes('freshSeed()') || !game.includes('spawnBlock()')) throw new Error('Random procedural block generation is missing.');
 if (!game.includes('project(x, y, z)')) throw new Error('3D perspective projection is missing.');
-if (!game.includes('drawAvatar()') || !game.includes("c.arc(cx-17, cy-8")) throw new Error('Smiling cube avatar is missing.');
+if (!game.includes('drawAvatar()') || !game.includes('const eyeY = cy - 8')) throw new Error('Smiling cube avatar is missing.');
 if (!game.includes('saberSweepPoint') || !game.includes('trySlice')) throw new Error('3D saber swing/collision path is missing.');
 if (!app.includes("brain.postMessage({ cmd: 'vision', vision: state.vision })")) throw new Error('Visual encoder is not wired to the brain worker.');
 if (!app.includes('neuralFeatures(state.brainFrame)')) throw new Error('Policy is not driven from neural telemetry.');
@@ -36,7 +36,7 @@ if (!html.includes('id="fullscreen-button"') || !app.includes('requestFullscreen
 
 if (!game.includes('this.rearmDuration = .72') || !game.includes('getActionMask()')) throw new Error('Global saber rearm lockout is missing.');
 if (!app.includes('const mask = state.game.getActionMask()') || !app.includes('learner.choose(x, prior, mask)')) throw new Error('Policy action masking during rearm is missing.');
-if (!app.includes("e.wrongTarget ? .78 : .38") || !app.includes("r -= 3.25")) throw new Error('Balanced anti-spam reward is missing.');
+if (!app.includes("e.wrongTarget ? .72 : .32") || !app.includes("e.type === 'impact'") || !app.includes("4.6")) throw new Error('Balanced impact/anti-spam reward is missing.');
 if (!policy.includes('mirrorFeatures(x)') || !policy.includes('mirroredAction')) throw new Error('Left/right symmetry augmentation is missing.');
 
 const memory = new Map();
@@ -45,9 +45,9 @@ const { ACTIONS } = await import(pathToFileURL(`${process.cwd()}/game.js`));
 if (ACTIONS.map(a => a.name).join(',') !== 'idle,left-swing,right-swing') throw new Error('Unexpected action ordering.');
 const { LinearQLearner, neuralFeatures } = await import(pathToFileURL(`${process.cwd()}/policy.js`));
 const x = neuralFeatures({ active_neurons:1200, mean_rate_hz:4.2, channels:{turn_bias:.2,escape_takeoff:.1,escape_long_mode:.03,stop_freeze:.02,backward_walk:.01}, dn_rates:{DN_left:12,DN_right:19,DN_escape:8}, proboscis_drive:0 });
-if (x.length !== 14 || [...x].some(v=>!Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
+if (x.length !== 14 || [...x].some(v => !Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
 const learner = new LinearQLearner(14, 3);
 learner.update(x, 1, 5, x, false);
-if (learner.updates !== 1 || learner.weights[1].some(v=>!Number.isFinite(v))) throw new Error('Learner update failed.');
+if (learner.updates !== 1 || learner.weights[1].some(v => !Number.isFinite(v))) throw new Error('Learner update failed.');
 
 console.log('verify: saber build checks passed');

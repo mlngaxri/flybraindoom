@@ -81,7 +81,7 @@ function persistExperiment() {
   learner.persist();
   try {
     localStorage.setItem(EXPERIMENT_KEY, JSON.stringify({
-      version: 2,
+      version: 1,
       episode: state.episode,
       bestReward: state.bestReward,
       rewards: state.rewards.slice(-600),
@@ -123,7 +123,7 @@ function setupBrain() {
       state.brainReady = true;
       state.brainCount = msg.n;
       state.brainPositions = msg.positions;
-      setStatus(ui.brainStatus, `${msg.n.toLocaleString()} neurons ready`, 'ok');
+      setStatus(ui.brainStatus, `${msg.n.toLocalString() } neurons ready`, 'ok');
       if (state.running) brain.postMessage({ cmd: 'play' });
     }
     if (msg.type === 'frame') {
@@ -245,8 +245,7 @@ function renderFlyView(cells, stimuli, salience) {
     retinaCtx.fill();
   }
   for (const s of stimuli) {
-    const x = (s.azimuth_deg / H_FOV_DEG + .5) * w;
-    const y = (.5 - s.elevation_deg / V_FOV_DEG) * h;
+    const x = (s.azimuth_deg / H_FOV_DEG + .5) * w, y = (.5 - s.elevation_deg / V_FOV_DEG) * h;
     const r = 4 + s.strength * 16;
     retinaCtx.beginPath(); retinaCtx.arc(x, y, r, 0, Math.PI * 2);
     retinaCtx.strokeStyle = `rgba(134,247,210,${.2 + s.strength * .75})`;
@@ -254,7 +253,7 @@ function renderFlyView(cells, stimuli, salience) {
   }
   retinaCtx.fillStyle = 'rgba(230,241,247,.75)';
   retinaCtx.font = '16px ui-monospace, monospace';
-  retinaCtx.fillText(`loom salience ${salience.toFixed(2)}`, 12, h - 14);
+  retinaCtx.fillText(`loom salience ${salience.toFixed(2)}`, 12, h-14);
 }
 
 function rewardFromEvents(events) {
@@ -267,8 +266,8 @@ function rewardFromEvents(events) {
       const combo = Math.min(12, Math.max(0, Number(e.combo) || 0));
       r += 6.4 + timing * 2.2 + accuracy * 1.4 + combo * .06;
     }
-    if (e.type === 'miss') r -= 3.25;
-    if (e.type === 'air') r -= e.wrongTarget ? .78 : .38;
+    if (e.type === 'impact') r -= 4.6 * clamp(Number(e.severity) || 1, .5, 1.25);
+    if (e.type === 'air') r -= e.wrongTarget ? .72 : .32;
     if (e.type === 'episode-end') terminal = true;
   }
   return { reward: clamp(r, -12, 12), terminal };
@@ -307,6 +306,11 @@ function control(now) {
   if (!state.brainReady || !Number.isFinite(state.brainFrame.t_ms) || state.brainFrame.t_ms <= 0) return;
   const x = neuralFeatures(state.brainFrame);
   const events = state.game.consumeEvents();
+  for (const e of events) {
+    if (e.type === 'impact' && brain && state.brainReady) {
+      brain.postMessage({ cmd: 'aversive', side: e.hand, strength: clamp(Number(e.severity) || 1, 0, 1) });
+    }
+  }
   const outcome = rewardFromEvents(events);
   const r = outcome.reward;
 
@@ -389,7 +393,7 @@ function drawReward() {
 function updateGameStats() {
   ui.score.textContent = state.game.score.toLocaleString();
   ui.combo.textContent = state.game.combo.toLocaleString();
-  ui.hits.textContent = state.game.hits.toLocaleString();
+  ui.hits.textContent = state.game.hits.toLocalString();
   ui.misses.textContent = state.game.misses.toLocaleString();
 }
 
@@ -405,7 +409,7 @@ function loop(now) {
     state.lastControlAt = now;
     control(now);
   }
-  drawBrain();
+  drawBrain(();
   drawReward();
   state.raf = requestAnimationFrame(loop);
 }

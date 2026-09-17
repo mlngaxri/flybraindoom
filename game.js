@@ -48,8 +48,12 @@ export class SaberGame {
     this.rng = mulberry32(this.seed);
     this.blocks = [];
     this.fragments = [];
+    this.flowParticles = [];
     this.events = [];
     this.time = 0;
+    this.flowSpeed = 9.2;
+    this.impactStrength = 0;
+    this.impactSide = 0;
     this.spawnIn = .75;
     this.score = 0;
     this.combo = 0;
@@ -78,8 +82,11 @@ export class SaberGame {
     this.rng = mulberry32(this.seed);
     this.blocks = [];
     this.fragments = [];
+    this.flowParticles = Array.from({ length: 92 }, () => this.makeFlowParticle());
     this.events = [];
     this.time = 0;
+    this.impactStrength = 0;
+    this.impactSide = 0;
     this.spawnIn = .72 + this.rng() * .68;
     this.score = 0;
     this.combo = 0;
@@ -107,6 +114,22 @@ export class SaberGame {
   }
 
   randomRange(a, b) { return a + (b - a) * this.rng(); }
+
+  makeFlowParticle(z = this.randomRange(6, 32)) {
+    const angle = this.randomRange(0, Math.PI * 2);
+    const radius = Math.sqrt(this.randomRange(.08, 1)) * this.randomRange(1.2, 4.2);
+    return {
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius * .62 + .18,
+      z,
+      length: this.randomRange(.07, .16),
+      alpha: this.randomRange(.18, .48),
+    };
+  }
+
+  recycleFlowParticle(p) {
+    Object.assign(p, this.makeFlowParticle(this.randomRange(24, 36)));
+  }
 
   spawnBlock() {
     const hand = this.rng() < .5 ? 'left' : 'right';
@@ -215,6 +238,12 @@ export class SaberGame {
     this.episodeTime += dt;
     this.spawnIn -= dt;
     this.rearm = Math.max(0, this.rearm - dt);
+    this.impactStrength = Math.max(0, this.impactStrength - dt * 2.7);
+
+    for (const p of this.flowParticles) {
+      p.z -= this.flowSpeed * dt;
+      if (p.z < 1.15) this.recycleFlowParticle(p);
+    }
 
     if (this.spawnIn <= 0) {
       this.spawnBlock();
@@ -251,7 +280,9 @@ export class SaberGame {
         block.missed = true;
         this.misses++;
         this.combo = 0;
-        this.events.push({ type: 'miss', hand: block.hand });
+        this.impactStrength = 1;
+        this.impactSide = block.hand === 'left' ? -1 : 1;
+        this.events.push({ type: 'impact', hand: block.hand, severity: 1 });
       }
     }
 
@@ -329,6 +360,46 @@ export class SaberGame {
     c.globalAlpha = 1;
     c.strokeStyle = 'rgba(255,255,255,.035)';
     c.beginPath(); c.moveTo(0, vy); c.lineTo(w, vy); c.stroke();
+    c.restore();
+  }
+
+  drawFlowField() {
+    const c = this.ctx;
+    c.save();
+    c.lineCap = 'round';
+    for (const p of this.flowParticles) {
+      const near = this.project(p.x, p.y, p.z);
+      const far = this.project(p.x, p.y, p.z + this.flowSpeed * p.length);
+      if (!Number.isFinite(near.x + near.y + far.x + far.y)) continue;
+      if (near.x < -40 || near.x > this.width + 40 || near.y < -40 || near.y > this.height + 40) continue;
+      const proximity = clamp(1 - (p.z - 1.15) / 34, 0, 1);
+      c.globalAlpha = p.alpha * (.35 + proximity * .9);
+      c.strokeStyle = 'rgba(130,205,255,.85)';
+      c.lineWidth = .7 + proximity * 2.1;
+      c.beginPath();
+      c.moveTo(far.x, far.y);
+      c.lineTo(near.x, near.y);
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  drawImpactOverlay() {
+    if (this.impactStrength <= 0) return;
+    const c = this.ctx;
+    const s = clamp(this.impactStrength, 0, 1);
+    const focusX = this.impactSide < 0 ? this.width * .28 : this.width * .72;
+    const sideX = this.impactSide < 0 ? 0 : this.width * .5;
+    const g = c.createRadialGradient(focusX, this.height * .48, 20, focusX, this.height * .48, this.width * .62);
+    g.addColorStop(0, `rgba(255,86,105,${.12 + s * .18})`);
+    g.addColorStop(1, `rgba(255,26,52,${s * .06})`);
+    c.save();
+    c.fillStyle = g;
+    c.fillRect(sideX, 0, this.width * .5, this.height);
+    c.globalAlpha = s * .35;
+    c.strokeStyle = '#ff596f';
+    c.lineWidth = 5;
+    c.strokeRect(3, 3, this.width - 6, this.height - 6);
     c.restore();
   }
 
@@ -458,13 +529,15 @@ export class SaberGame {
     c.closePath(); c.fill();
 
     c.fillStyle = '#15222a';
-    c.beginPath(); c.arc(cx-17, cy-8, 5.5, 0, Math.PI*2); c.fill();
-    c.beginPath(); c.arc(cx+17, cy-8, 5.5, 0, Math.PI*2); c.fill();
+    const eyeY = cy - 8 + this.impactStrength * 2;
+    c.beginPath(); c.arc(cx-17, eyeY, 5.5, 0, Math.PI*2); c.fill();
+    c.beginPath(); c.arc(cx+17, eyeY, 5.5, 0, Math.PI*2); c.fill();
     c.strokeStyle = '#15222a';
     c.lineWidth = 4;
     c.lineCap = 'round';
     c.beginPath();
-    c.arc(cx, cy+4, 20, .18*Math.PI, .82*Math.PI);
+    if (this.impactStrength > .08) c.arc(cx, cy+19, 17, 1.18*Math.PI, 1.82*Math.PI);
+    else c.arc(cx, cy+4, 20, .18*Math.PI, .82*Math.PI);
     c.stroke();
     c.restore();
   }
@@ -486,11 +559,13 @@ export class SaberGame {
 
   render() {
     this.drawTunnel();
+    this.drawFlowField();
     const sorted = [...this.blocks].filter(b => !b.sliced && b.z > .6).sort((a, b) => b.z - a.z);
     for (const block of sorted) this.drawCube(block);
     this.drawFragments();
     this.drawAvatar();
     this.drawSabers();
     this.drawHUD();
+    this.drawImpactOverlay();
   }
 }
