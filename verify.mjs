@@ -36,8 +36,11 @@ if (!html.includes('id="fullscreen-button"') || !app.includes('requestFullscreen
 
 if (!game.includes('this.rearmDuration = .72') || !game.includes('getActionMask()')) throw new Error('Global saber rearm lockout is missing.');
 if (!app.includes('const mask = state.game.getActionMask()') || !app.includes('learner.choose(x, prior, mask)')) throw new Error('Policy action masking during rearm is missing.');
-if (!app.includes("e.wrongTarget ? .72 : .32") || !app.includes("e.type === 'impact'") || !app.includes("4.6")) throw new Error('Balanced impact/anti-spam reward is missing.');
+if (!app.includes("e.wrongTarget ? .72 : .32") || !app.includes("e.type === 'impact'") || !app.includes('4.6')) throw new Error('Balanced impact/anti-spam reward is missing.');
 if (!policy.includes('mirrorFeatures(x)') || !policy.includes('mirroredAction')) throw new Error('Left/right symmetry augmentation is missing.');
+if (!game.includes('drawFlowField()') || !game.includes('this.flowSpeed = 9.2') || !game.includes('makeFlowParticle')) throw new Error('Forward optic-flow field is missing.');
+if (!game.includes("type: 'impact'") || !game.includes('drawImpactOverlay()')) throw new Error('Block impact feedback is missing.');
+if (!app.includes("cmd: 'aversive'") || !worker.includes("message.cmd === 'aversive'") || !worker.includes('addAversiveOverlay(now)')) throw new Error('Aversive connectome pulse wiring is missing.');
 
 const memory = new Map();
 globalThis.localStorage = { getItem:k=>memory.get(k)??null, setItem:(k,v)=>memory.set(k,String(v)), removeItem:k=>memory.delete(k) };
