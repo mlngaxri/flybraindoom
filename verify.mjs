@@ -10,6 +10,7 @@ const html = fs.readFileSync('index.html', 'utf8');
 const app = fs.readFileSync('app.js', 'utf8');
 const game = fs.readFileSync('game.js', 'utf8');
 const policy = fs.readFileSync('policy.js', 'utf8');
+const worker = fs.readFileSync('brain-worker.js', 'utf8');
 const styles = fs.readFileSync('styles.css', 'utf8');
 
 const requiredIds = [...app.matchAll(/\$\('#([^']+)'\)/g)].map((m) => m[1]);
@@ -17,34 +18,38 @@ for (const id of new Set(requiredIds)) {
   if (!html.includes(`id="${id}"`)) throw new Error(`Missing DOM id: ${id}`);
 }
 
-if (!game.includes('export class FlappyGame')) throw new Error('Flappy benchmark environment is missing.');
-if (!game.includes("{ name: 'flap' }") || !game.includes("{ name: 'coast' }")) throw new Error('Flap/coast action set is missing.');
-if ((game.match(/name:/g) || []).length !== 2) throw new Error('Controller exposes more than two game actions.');
-if (/\b(DoomGame|chocolate-doom|freedoom)\b/i.test(game)) throw new Error('Legacy Doom runtime remains in the game module.');
+if (/\b(fire|shoot|attack)\b/i.test(game)) throw new Error('Navigation controller unexpectedly exposes a weapon action.');
+if (!game.includes("{ name: 'forward'")) throw new Error('Doom navigation actions are missing.');
+if (!game.includes("'-skill', '3'")) throw new Error('Threat-mode Doom difficulty is not enabled.');
 if (/state\.vision/.test(policy)) throw new Error('Policy module must not consume raw game vision.');
-if (!app.includes('neuralFeatures(state.brainFrame)')) throw new Error('Policy is not driven by neural telemetry.');
 if (!app.includes("brain.postMessage({ cmd: 'vision', vision: state.vision })")) throw new Error('Visual encoder is not connected to the brain worker.');
-if (!app.includes('featureCtx.drawImage(gameCanvas, 0, 0, gameCanvas.width, gameCanvas.height')) throw new Error('Fly vision is not sampling the complete game frame.');
-if (/height\s*-\s*6|usableH\s*=\s*h\s*-/.test(app)) throw new Error('A legacy sensory crop reappeared.');
-
-if (!app.includes('reinforcementFromEvents')) throw new Error('Event-based reinforcement is missing.');
-if (!app.includes("event.type === 'pipe'")) throw new Error('Pipe-pass reward is missing.');
-if (!app.includes("event.type === 'death'")) throw new Error('Collision penalty is missing.');
-if (!app.includes('reward += 12')) throw new Error('Pipe reward is not high-magnitude.');
-if (!app.includes('reward -= 30')) throw new Error('Collision penalty is not high-magnitude.');
-if (/rotation|loopScore|sceneNewness|forwardFlow/.test(app.split('function reinforcementFromEvents')[1].split('function resetEpisode')[0])) {
-  throw new Error('Reward function is using visual-motion proxies instead of game events.');
-}
+if (!app.includes('neuralFeatures(state.brainFrame)')) throw new Error('Policy is not driven from neural telemetry.');
+if (!app.includes("gameViewCanvas.id = 'game-view-canvas'")) throw new Error('Dedicated centered game presentation canvas is missing.');
+if (!app.includes('drawFullFrame(engineCanvas, featureCtx')) throw new Error('Fly vision is not sampling the complete framebuffer.');
+if (/height\s*-\s*6|usableH\s*=\s*h\s*-/.test(app)) throw new Error('Legacy bottom-row sensory crop reappeared.');
+if (!styles.includes('#game-view-canvas') || !styles.includes('#doom-canvas.engine-canvas')) throw new Error('Framebuffer presentation/isolation styles are missing.');
+if (!game.includes("'aspect_ratio_correct 1'")) throw new Error('Chocolate Doom aspect correction is not explicit.');
+if (!game.includes("'screenblocks 11'")) throw new Error('Doom full scene viewport is not enabled.');
 
 if (!html.includes('id="fullscreen-button"') || !html.includes('id="fullscreen-exit"')) throw new Error('Fullscreen controls are missing.');
 if (!app.includes('requestFullscreen') || !app.includes('exitFullscreen')) throw new Error('Fullscreen API wiring is missing.');
 if (!styles.includes('.game-wrap:fullscreen')) throw new Error('Fullscreen contain styling is missing.');
-if (!styles.includes('aspect-ratio: 9 / 16')) throw new Error('Portrait game presentation is not constrained correctly.');
 
-if (!app.includes("EXPERIMENT_KEY = 'flybraindoom.experiment.v5'")) throw new Error('Experiment persistence is not on v5.');
-if (!policy.includes("POLICY_KEY = 'flybraindoom.policy.v5'")) throw new Error('Learner persistence is not on v5.');
-if (!app.includes('bestScore')) throw new Error('Best score persistence is missing.');
-if (!html.includes('No original Flappy Bird sprites, audio or source code are redistributed.')) throw new Error('Asset provenance disclosure is missing.');
+if (!html.includes('id="threat-drive"')) throw new Error('Threat telemetry is missing from the interface.');
+if (!app.includes('localDarkOnset') || !app.includes('darkOnset * 5.2')) throw new Error('Sudden-darkening threat detector is missing.');
+if (!app.includes('forwardFlow * 1.25')) throw new Error('Forward looming contribution to threat is missing.');
+if (!app.includes('1 - rotation * .82')) throw new Error('Anti-spin threat gate is missing.');
+if (!app.includes('r -= .08 * v.threat')) throw new Error('Aversive threat reinforcement is missing.');
+if (!worker.includes('globalThreat') || !worker.includes('intensity * 820')) throw new Error('Threat-sensitive LC4/LPLC2 looming projection is missing.');
+if (!worker.includes('max_half_angle_deg: 80')) throw new Error('High-salience looming geometry is missing.');
+
+if (!app.includes("EXPERIMENT_KEY = 'flybraindoom.experiment.v4'")) throw new Error('Doom experiment persistence is not restored.');
+if (!policy.includes("POLICY_KEY = 'flybraindoom.policy.v4'")) throw new Error('Doom learner persistence is not restored.');
+if (!app.includes('loopScore') || !app.includes("'circling-loss-proxy'")) throw new Error('Anti-circling detection is missing.');
+if (!app.includes("? 50 : -30")) throw new Error('High-magnitude terminal reinforcement is missing.');
+if (!app.includes('r -= .38 * circleEvidence')) throw new Error('Repeated-scene circle penalty is missing.');
+if (!app.includes('r -= .16 * v.rotation')) throw new Error('Rotation penalty is missing.');
+if (!policy.includes('Math.min(20, rawError)')) throw new Error('Learner error range does not support the stronger terminal signal.');
 
 const memory = new Map();
 globalThis.localStorage = {
@@ -52,7 +57,7 @@ globalThis.localStorage = {
   setItem: (key, value) => memory.set(key, String(value)),
   removeItem: (key) => memory.delete(key),
 };
-const { LinearQLearner, neuralFeatures, neuralActionPrior } = await import(pathToFileURL(`${process.cwd()}/policy.js`));
+const { LinearQLearner, neuralFeatures } = await import(pathToFileURL(`${process.cwd()}/policy.js`));
 const frame = {
   active_neurons: 1200,
   mean_rate_hz: 4.2,
@@ -62,11 +67,8 @@ const frame = {
 };
 const x = neuralFeatures(frame);
 if (x.length !== 14 || [...x].some((v) => !Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
-const prior = neuralActionPrior(frame, 2);
-if (prior.length !== 2 || prior.some((v) => !Number.isFinite(v))) throw new Error('Two-action neural prior is invalid.');
-const learner = new LinearQLearner(14, 2);
-learner.update(x, 0, 12, x, false);
-learner.update(x, 1, -30, x, true);
-if (learner.updates !== 2 || learner.weights.some((row) => row.some((v) => !Number.isFinite(v)))) throw new Error('Learner update failed.');
+const learner = new LinearQLearner(14, 7);
+learner.update(x, 0, 50, x, true);
+if (learner.updates !== 1 || learner.weights[0].some((v) => !Number.isFinite(v))) throw new Error('Learner update failed.');
 
-console.log('verify: all Flappy benchmark checks passed');
+console.log('verify: all checks passed');
