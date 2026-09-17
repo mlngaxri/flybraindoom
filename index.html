@@ -30,14 +30,18 @@
             <p class="kicker">ENVIRONMENT</p>
             <h2>Freedoom</h2>
           </div>
-          <div class="tiny-stats">
-            <span>episode <b id="episode">0</b></span>
-            <span>reward <b id="reward">0.00</b></span>
-            <span>best <b id="best-reward">0.00</b></span>
+          <div class="game-head-controls">
+            <div class="tiny-stats">
+              <span>episode <b id="episode">0</b></span>
+              <span>reward <b id="reward">0.00</b></span>
+              <span>best <b id="best-reward">0.00</b></span>
+            </div>
+            <button id="fullscreen-button" type="button">Fullscreen gameplay</button>
           </div>
         </div>
         <div class="game-wrap">
           <canvas id="doom-canvas" width="320" height="200" tabindex="0" aria-label="Freedoom game view"></canvas>
+          <button id="fullscreen-exit" class="fullscreen-exit" type="button">Exit fullscreen</button>
           <div id="game-overlay" class="game-overlay">
             <div>
               <strong>Closed-loop experiment</strong>
