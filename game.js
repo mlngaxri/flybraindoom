@@ -22,8 +22,6 @@ export class DoomGame {
   }
 
   async boot() {
-    // Chocolate Doom renders a 320x200 framebuffer. Keep the backing store fixed
-    // and let CSS correct the historical non-square pixels to a 4:3 display.
     this.canvas.width = 320;
     this.canvas.height = 200;
 
@@ -46,9 +44,6 @@ export class DoomGame {
       try { module.FS.mkdir(dir); } catch {}
     }
 
-    // screenblocks 11 removes Doom's decorative tiled border and status bar.
-    // That matters here because the fly's camera should contain scene pixels,
-    // not a large static UI texture that can dominate the sensory encoder.
     module.FS.writeFile('/config/default.cfg', [
       'fullscreen 0',
       'window_width 320',
@@ -58,7 +53,12 @@ export class DoomGame {
       'screenblocks 11',
       'show_messages 0',
     ].join('\n') + '\n');
-    module.FS.writeFile('/config/chocolate-doom.cfg', 'smooth_pixel_scaling 0\nforce_software_renderer 1\n');
+    module.FS.writeFile('/config/chocolate-doom.cfg', [
+      'smooth_pixel_scaling 0',
+      'force_software_renderer 1',
+      'aspect_ratio_correct 1',
+      'integer_scaling 0',
+    ].join('\n') + '\n');
 
     const args = [
       '-window', '-iwad', '/iwads/freedoom2.wad', '-warp', '1', '-skill', '2', '-nomusic',
