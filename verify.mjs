@@ -30,7 +30,7 @@ if (/state\.game|block(?:s)?|combo|miss(?:es)?|hit(?:s)?/i.test(policy)) throw n
 if (!app.includes('state.game.consumeEvents()')) throw new Error('Reward is not derived from environment events.');
 if (!app.includes("EXPERIMENT_KEY = 'flybrainsaber.experiment.v2'")) throw new Error('Saber experiment persistence key is missing.');
 if (!policy.includes("POLICY_KEY = 'flybrainsaber.policy.v2'")) throw new Error('Saber learner persistence key is missing.');
-if (!worker.includes('vision.salience ?? vision.threat')) throw new Error('Generic visual salience is not supported by worker.');
+if (!/vision\.salience\s*\?\?\s*vision\.threat/.test(worker)) throw new Error('Generic visual salience is not supported by worker.');
 if (!html.includes('left blue') || !html.includes('right red')) throw new Error('Left/right saber labels are missing.');
 if (!html.includes('id="fullscreen-button"') || !app.includes('requestFullscreen')) throw new Error('Fullscreen support is missing.');
 
@@ -45,9 +45,9 @@ const { ACTIONS } = await import(pathToFileURL(`${process.cwd()}/game.js`));
 if (ACTIONS.map(a => a.name).join(',') !== 'idle,left-swing,right-swing') throw new Error('Unexpected action ordering.');
 const { LinearQLearner, neuralFeatures } = await import(pathToFileURL(`${process.cwd()}/policy.js`));
 const x = neuralFeatures({ active_neurons:1200, mean_rate_hz:4.2, channels:{turn_bias:.2,escape_takeoff:.1,escape_long_mode:.03,stop_freeze:.02,backward_walk:.01}, dn_rates:{DN_left:12,DN_right:19,DN_escape:8}, proboscis_drive:0 });
-if (x.length !== 14 || [...x].some(v => !Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
+if (x.length !== 14 || [...x].some(v=>!Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
 const learner = new LinearQLearner(14, 3);
 learner.update(x, 1, 5, x, false);
-if (learner.updates !== 1 || learner.weights[1].some(v => !Number.isFinite(v))) throw new Error('Learner update failed.');
+if (learner.updates !== 1 || learner.weights[1].some(v=>!Number.isFinite(v))) throw new Error('Learner update failed.');
 
 console.log('verify: saber build checks passed');
