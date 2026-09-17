@@ -4,16 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>Fly Brain Flappy</title>
-  <meta name="description" content="A browser experiment connecting a Drosophila connectome simulation to a Flappy-style visual benchmark." />
+  <title>Fly Brain Doom</title>
+  <meta name="description" content="A browser experiment connecting a Drosophila connectome simulation to a threat-sensitized Freedoom navigation environment." />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">CONNECTOME × VISUAL CONTROL</p>
-        <h1>Fly Brain Flappy</h1>
+        <p class="eyebrow">CONNECTOME × THREAT NAVIGATION</p>
+        <h1>Fly Brain Doom</h1>
       </div>
       <div class="header-actions">
         <span id="brain-status" class="status status-warn">brain loading</span>
@@ -28,34 +28,34 @@
         <div class="panel-head">
           <div>
             <p class="kicker">ENVIRONMENT</p>
-            <h2>Flappy benchmark</h2>
+            <h2>Freedoom · threat mode</h2>
           </div>
           <div class="game-head-controls">
             <div class="tiny-stats">
-              <span>score <b id="score">0</b></span>
-              <span>best <b id="best-score">0</b></span>
               <span>episode <b id="episode">0</b></span>
+              <span>reward <b id="reward">0.00</b></span>
+              <span>best <b id="best-reward">0.00</b></span>
             </div>
-            <button id="fullscreen-button" type="button">Fullscreen game</button>
+            <button id="fullscreen-button" type="button">Fullscreen gameplay</button>
           </div>
         </div>
-        <div class="game-stage">
-          <div class="game-wrap">
-            <canvas id="game-canvas" width="288" height="512" tabindex="0" aria-label="Flappy-style benchmark game"></canvas>
-            <button id="fullscreen-exit" class="fullscreen-exit" type="button">Exit fullscreen</button>
-            <div id="game-overlay" class="game-overlay">
-              <div>
-                <strong>Closed-loop experiment</strong>
-                <span>Start to let the fly-connectome controller learn flap timing.</span>
-              </div>
+        <div class="game-wrap">
+          <canvas id="doom-canvas" width="320" height="200" tabindex="0" aria-label="Freedoom game view"></canvas>
+          <button id="fullscreen-exit" class="fullscreen-exit" type="button">Exit fullscreen</button>
+          <div id="game-overlay" class="game-overlay">
+            <div>
+              <strong>Threat-sensitized closed loop</strong>
+              <span>Rapid expansion and sudden darkening strongly drive the modeled fly looming pathway.</span>
             </div>
           </div>
         </div>
         <div class="action-strip" aria-label="Current controller output">
-          <span id="action-label">coast</span>
+          <span id="action-label">idle</span>
           <div class="action-bars">
-            <label>flap <i><b id="bar-flap"></b></i></label>
-            <label>coast <i><b id="bar-coast"></b></i></label>
+            <label>forward <i><b id="bar-forward"></b></i></label>
+            <label>left <i><b id="bar-left"></b></i></label>
+            <label>right <i><b id="bar-right"></b></i></label>
+            <label>use <i><b id="bar-use"></b></i></label>
           </div>
         </div>
       </article>
@@ -83,19 +83,18 @@
       <article class="panel retina-panel">
         <div class="panel-head compact">
           <div>
-            <p class="kicker">MODELED FLY VISUAL DRIVE</p>
-            <h2>LC4 / LPLC2 receptive fields</h2>
+            <p class="kicker">MODELED FLY VISION</p>
+            <h2>LC4 / LPLC2 threat drive</h2>
           </div>
           <span id="vision-summary" class="muted">waiting for frames</span>
         </div>
-        <div class="retina-stage">
-          <canvas id="retina-canvas" width="360" height="600" aria-label="Modeled fly visual sensory drive"></canvas>
-        </div>
-        <div class="sector-grid">
+        <canvas id="retina-canvas" width="192" height="120" aria-label="Modeled fly looming and threat sensory drive"></canvas>
+        <div class="sector-grid threat-grid">
           <div><span>left motion</span><b id="motion-left">0.000</b></div>
           <div><span>centre motion</span><b id="motion-center">0.000</b></div>
           <div><span>right motion</span><b id="motion-right">0.000</b></div>
-          <div><span>visual change</span><b id="visual-change">0.000</b></div>
+          <div><span>forward flow</span><b id="novelty">0.000</b></div>
+          <div class="threat-stat"><span>threat drive</span><b id="threat-drive">0.000</b></div>
         </div>
       </article>
 
@@ -110,11 +109,9 @@
         <canvas id="reward-canvas" width="520" height="170" aria-label="Reward history"></canvas>
         <div class="learning-grid">
           <div><span>step reward</span><b id="step-reward">0.000</b></div>
-          <div><span>episode reward</span><b id="reward">0.00</b></div>
-          <div><span>best reward</span><b id="best-reward">0.00</b></div>
           <div><span>exploration ε</span><b id="epsilon">0.120</b></div>
           <div><span>policy updates</span><b id="updates">0</b></div>
-          <div><span>terminal event</span><b id="terminal-state">none</b></div>
+          <div><span>terminal proxy</span><b id="terminal-state">none</b></div>
         </div>
       </article>
 
@@ -122,26 +119,26 @@
         <div class="panel-head compact">
           <div>
             <p class="kicker">METHOD</p>
-            <h2>What is real vs modelled</h2>
+            <h2>What “scary for the fly” means</h2>
           </div>
         </div>
         <div class="method-columns">
           <div>
             <h3>Measured / sourced</h3>
-            <p>The connectome topology, neuron positions, neuron metadata and LC4/LPLC2 receptive-field assignments come from the browser-ready FlyWire-derived dataset used by Fruit Fly Lab.</p>
-            <p>The controller receives simulated neural telemetry from that connectome. The reinforcement policy never receives pipe coordinates, bird height, velocity or collision geometry.</p>
+            <p>Connectome topology, neuron positions, neuron metadata and LC4/LPLC2 receptive-field assignments come from the browser-ready FlyWire-derived dataset used by Fruit Fly Lab.</p>
+            <p>Freedoom runs through a WebAssembly Chocolate Doom build. The controller remains navigation-only, with no weapon-firing action.</p>
           </div>
           <div>
-            <h3>Engineered</h3>
-            <p>The Flappy-style environment, replacement artwork, neuronal dynamics, frame-to-visual-drive encoder and flap/coast readout are engineered components. No original Flappy Bird sprites, audio or source code are redistributed.</p>
-            <p>Reinforcement is event-based: small survival reward, large pipe-pass reward, bonus for a new best score, and a large collision penalty. This removes the old motion/rotation reward loopholes.</p>
+            <h3>Engineered threat model</h3>
+            <p>The software does not assume the simulated fly subjectively feels fear. Instead, rapid image expansion, abrupt darkening and strong local motion are amplified into looming stimuli intended to recruit escape/freeze-related activity more strongly.</p>
+            <p>The reinforcement readout still receives neural telemetry only. Full-frame game pixels are used for sensory encoding and environmental reward signals, not as direct policy inputs.</p>
           </div>
         </div>
       </article>
     </section>
   </main>
 
-  <canvas id="feature-canvas" width="72" height="128" hidden></canvas>
+  <canvas id="feature-canvas" width="64" height="48" hidden></canvas>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
