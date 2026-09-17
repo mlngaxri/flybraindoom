@@ -43,6 +43,12 @@ if (!app.includes('r -= .08 * v.threat')) throw new Error('Aversive threat reinf
 if (!worker.includes('globalThreat') || !worker.includes('intensity * 820')) throw new Error('Threat-sensitive LC4/LPLC2 looming projection is missing.');
 if (!worker.includes('max_half_angle_deg: 80')) throw new Error('High-salience looming geometry is missing.');
 
+if (!game.includes('startWatchdog()')) throw new Error('Automatic game recovery watchdog is missing.');
+if (!game.includes("this.respawn('visual-stall')")) throw new Error('Visual-stall auto-restart is missing.');
+if (!game.includes("[2050, 'Space', 120]")) throw new Error('Repeated delayed restart sequence is missing.');
+if (!game.includes("new CustomEvent('flydoom:autorespawn'")) throw new Error('Auto-restart telemetry event is missing.');
+if (!game.includes('now - this.lastVisualChangeAt > 6500')) throw new Error('Dead/frozen visual watchdog threshold is missing.');
+
 if (!app.includes("EXPERIMENT_KEY = 'flybraindoom.experiment.v4'")) throw new Error('Doom experiment persistence is not restored.');
 if (!policy.includes("POLICY_KEY = 'flybraindoom.policy.v4'")) throw new Error('Doom learner persistence is not restored.');
 if (!app.includes('loopScore') || !app.includes("'circling-loss-proxy'")) throw new Error('Anti-circling detection is missing.');
