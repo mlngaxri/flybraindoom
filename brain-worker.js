@@ -14,7 +14,7 @@ let neurons = null;
 let running = false;
 let loopTimer = null;
 let tickMs = 5;
-let lastStimulusAt = 0;
+let lastStimulusAt = -Infinity;
 
 const send = (type, payload = {}, transfer = undefined) => {
   const message = { type, ...payload };
@@ -126,16 +126,43 @@ async function boot() {
 function applyVision(vision) {
   if (!session) return;
   const now = session.engine.tMs;
-  if (now - lastStimulusAt < 24) return;
+  if (now - lastStimulusAt < 18) return;
   lastStimulusAt = now;
 
   session.clearStimuli();
+
+  // The front-end performs temporal adaptation and camera-rotation compensation,
+  // then sends the strongest local looming candidates. Each one is projected into
+  // the real LC4/LPLC2 receptive-field map by Fruit Fly Lab's LoomingEncoder.
+  const candidates = Array.isArray(vision.stimuli)
+    ? vision.stimuli
+        .filter((s) => Number.isFinite(s?.strength) && s.strength > 0)
+        .sort((a, b) => b.strength - a.strength)
+        .slice(0, 12)
+    : [];
+
+  if (candidates.length) {
+    for (const s of candidates) {
+      const intensity = Math.max(0, Math.min(1, Number(s.strength) || 0));
+      if (intensity < 0.04) continue;
+      session.addLooming({
+        azimuth_deg: Math.max(-85, Math.min(85, Number(s.azimuth_deg) || 0)),
+        elevation_deg: Math.max(-50, Math.min(50, Number(s.elevation_deg) || 0)),
+        half_size_mm: 2.2 + intensity * 8.5,
+        speed_mm_s: 45 + intensity * 430,
+        start_distance_mm: 42 + (1 - intensity) * 95,
+        max_half_angle_deg: 72,
+      });
+    }
+    return;
+  }
+
+  // Backwards-compatible fallback for old clients.
   const sectors = [
     { key: 'left', azimuth_deg: -36 },
     { key: 'center', azimuth_deg: 0 },
     { key: 'right', azimuth_deg: 36 },
   ];
-
   for (const sector of sectors) {
     const motion = Math.max(0, Math.min(1, Number(vision[sector.key]) || 0));
     if (motion < 0.035) continue;
@@ -172,12 +199,16 @@ function loop() {
         dn_rates: frame.dn_rates,
         proboscis_drive: frame.proboscis_drive,
         escape_laterality: frame.escape_laterality,
+        body: frame.body,
         active_idx: active,
         wall_ms: wall,
       },
     });
   }
-  loopTimer = setTimeout(loop, 0);
+
+  // Keep simulated time near wall-clock time when the machine is fast enough.
+  // If computation is slower than real time we never skip neural integration.
+  loopTimer = setTimeout(loop, Math.max(0, tickMs - wall));
 }
 
 self.onmessage = (event) => {
@@ -201,6 +232,7 @@ self.onmessage = (event) => {
     }
     if (message.cmd === 'reset') {
       if (session) session.reset((message.seed ?? Date.now()) & 0xffff);
+      lastStimulusAt = -Infinity;
       return;
     }
     if (message.cmd === 'speed') {
