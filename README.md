@@ -1,50 +1,34 @@
-# Fly Brain Doom
+# Fly Brain Saber
 
-A browser experiment that connects a Drosophila connectome simulation to a live Freedoom navigation environment.
+A browser experiment that connects a simulated Drosophila connectome to an original random 3D saber-slicing task.
 
-## What it does
+## What it is
 
-- boots Freedoom in the browser through a WebAssembly Chocolate Doom build;
-- samples the complete game framebuffer rather than a cropped spectator view;
-- separates camera rotation from forward optic flow so spinning is not treated as useful progress;
-- detects rapid expansion, strong local motion and sudden darkening as threat-like visual events;
-- projects those events into LC4/LPLC2 receptive fields in a browser whole-brain simulation;
-- reads descending-neuron and population activity into a small reinforcement-learning readout;
-- maps the learned output to navigation controls only: forward, left, right and use/open;
-- penalizes spinning, repeated visual loops, prolonged immobility and high threat exposure;
-- renders live game vision, neural activity, modeled threat drive, policy actions and reward history;
-- persists the Doom readout weights and experiment history in `localStorage`.
+The environment is inspired by the general one-to-one coloured-saber mechanic familiar from rhythm-slicing games, but it is not the commercial Beat Saber game and includes none of its code, music, models, textures, charts or other assets.
 
-Weapon firing is deliberately not part of the controller.
+The active task has no music. Incoming cubes are procedurally generated with random hand, position, speed, spacing and rotation. Blue targets are randomly positioned in the left visual field and red targets in the right so the current looming-dominant visual pathway has a genuine lateralized cue without receiving a hidden colour label. The visible avatar is a smiling cube. Its left saber is blue and its right saber is red.
 
-## Threat mode
+## Closed loop
 
-“Scary for the fly” is implemented as a stronger **modeled threat drive**, not as a claim that the simulation has subjective fear. Rapid image expansion, sudden darkening and strong non-rotational local motion are selectively amplified into looming stimuli. The browser worker then projects those stimuli through Fruit Fly Lab's existing LC4/LPLC2 looming encoder using more urgent approach parameters.
+1. The 3D scene is rendered to the browser canvas.
+2. The complete rendered frame is downsampled and converted into spatial temporal-change / looming candidates.
+3. Those candidates are mapped into the existing LC4/LPLC2 visual pathway provided by the Fruit Fly Lab browser simulator.
+4. The connectome simulation produces neural telemetry.
+5. A small learned readout chooses exactly one of three actions: `idle`, `left-swing`, or `right-swing`.
+6. Hits, misses and empty swings provide scalar reinforcement.
 
-This keeps the scientific boundary explicit: the connectome structure is sourced, while the neuron dynamics, sensory encoding, threat amplification, reward function and neural-to-action readout are engineering choices.
+The policy never receives block coordinates, colour labels, depth, time-to-contact, score, or other privileged game state. Hidden environment state is used only for collision detection and scalar reward generation.
 
-## Scientific boundary
+## What is biological vs engineered
 
-The connectome topology and neuron metadata are sourced from the browser-ready FlyWire-derived dataset used by [Fruit Fly Lab](https://github.com/vaibhavkedarisetti/fruit-fly-lab). The neural dynamics, sensory encoding, threat model, reward function and readout are modelling choices. This is not a literal reconstructed living fly brain, and improvement in game reward is not evidence of biological learning.
+The connectome graph, neuron positions/metadata and simulator visual pathway come from the pinned Fruit Fly Lab source. Electrical dynamics, frame-to-looming encoding, the action readout, reward model, saber body mapping and the game itself are computational assumptions.
 
-The policy receives neural telemetry only. Raw game pixels are used to construct visual stimulation and environmental reward signals, not as direct action-selection inputs.
+The result should be described as a fly-connectome-driven controller, not as an uploaded fly mind and not as evidence that a simulated fly experiences the game subjectively.
 
-## Run locally
+## Learning
 
-No build step is required.
+Saber learning uses its own storage namespace (`flybrainsaber.*`) and does not reuse Doom or Flappy policy weights. Episodes reset automatically after 75 seconds or 18 misses while learned weights persist locally.
 
-```bash
-python3 -m http.server 4173
-```
+## Run
 
-Then open `http://localhost:4173` and press **Start experiment**.
-
-The first load downloads the connectome graph and WebAssembly game engine from pinned public sources, so it requires an internet connection.
-
-## Deployment
-
-The app is static and Vercel-ready. `vercel.json` adds the cross-origin headers used by the browser runtime.
-
-## Upstream components
-
-See [ATTRIBUTIONS.md](./ATTRIBUTIONS.md).
+Serve the repository as static files and open `index.html` in a modern browser. The brain simulator downloads its pinned connectome assets on first load.

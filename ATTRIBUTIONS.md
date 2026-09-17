@@ -1,23 +1,21 @@
 # Attributions
 
-This project integrates or loads the following public upstream projects at runtime.
+## Active dependency
 
-## Fruit Fly Lab
+### Fruit Fly Lab
 
-Repository: https://github.com/vaibhavkedarisetti/fruit-fly-lab
+This project uses the browser-ready fly connectome simulator and data-loading format from Fruit Fly Lab, pinned to commit:
 
-Used for browser connectome data, neuron metadata and the whole-brain simulation modules. Runtime URLs are pinned to commit `26672e06427c12c61536ce1bd93dae7442944681`.
+`26672e06427c12c61536ce1bd93dae7442944681`
 
-## doom-wasm / Chocolate Doom WebAssembly
+Repository: `vaibhavkedarisetti/fruit-fly-lab`
 
-Repository: https://github.com/gabrielbotandev/doom-wasm
+The application treats connectome topology, neuron positions/metadata and the simulator's visual-pathway machinery as sourced components. The game environment, visual preprocessing, reinforcement learning readout and game-control mappings are original project code.
 
-Used for the browser Chocolate Doom engine and its bundled freely redistributable Freedoom data. Runtime URLs are pinned to commit `64de0924591dec59a7d49a7d10467e125b50ea99`.
+## Saber environment
 
-## Freedoom
+The current 3D saber environment is procedural and contains no commercial Beat Saber code, audio, models, textures, maps, or other assets. The general concept of slicing approaching coloured blocks with matching left/right sabers is used as a gameplay benchmark only.
 
-Project: https://freedoom.github.io/
+## Historical repository context
 
-Freedoom provides free game data compatible with the Doom engine. This project does not redistribute proprietary Doom IWADs.
-
-Upstream projects retain their original licenses and notices. This repository's integration code does not supersede those terms.
+Earlier revisions of this repository experimented with Freedoom / Chocolate Doom and a Flappy-style benchmark. Those runtimes are not active dependencies of the current saber build.

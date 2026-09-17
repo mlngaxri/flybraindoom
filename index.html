@@ -4,16 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>Fly Brain Doom</title>
-  <meta name="description" content="A browser experiment connecting a Drosophila connectome simulation to a threat-sensitized Freedoom navigation environment." />
+  <title>Fly Brain Saber</title>
+  <meta name="description" content="A random 3D saber benchmark controlled by a simulated Drosophila connectome." />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">CONNECTOME × THREAT NAVIGATION</p>
-        <h1>Fly Brain Doom</h1>
+        <p class="eyebrow">CONNECTOME × RANDOM 3D SABER CONTROL</p>
+        <h1>Fly Brain Saber</h1>
       </div>
       <div class="header-actions">
         <span id="brain-status" class="status status-warn">brain loading</span>
@@ -28,34 +28,34 @@
         <div class="panel-head">
           <div>
             <p class="kicker">ENVIRONMENT</p>
-            <h2>Freedoom · threat mode</h2>
+            <h2>Random saber arena</h2>
           </div>
           <div class="game-head-controls">
             <div class="tiny-stats">
-              <span>episode <b id="episode">0</b></span>
-              <span>reward <b id="reward">0.00</b></span>
-              <span>best <b id="best-reward">0.00</b></span>
+              <span>score <b id="score">0</b></span>
+              <span>combo <b id="combo">0</b></span>
+              <span>hits <b id="hits">0</b></span>
+              <span>misses <b id="misses">0</b></span>
             </div>
-            <button id="fullscreen-button" type="button">Fullscreen gameplay</button>
+            <button id="fullscreen-button" type="button">Fullscreen game</button>
           </div>
         </div>
         <div class="game-wrap">
-          <canvas id="doom-canvas" width="320" height="200" tabindex="0" aria-label="Freedoom game view"></canvas>
+          <canvas id="game-canvas" width="960" height="600" tabindex="0" aria-label="Random 3D saber benchmark"></canvas>
           <button id="fullscreen-exit" class="fullscreen-exit" type="button">Exit fullscreen</button>
           <div id="game-overlay" class="game-overlay">
             <div>
-              <strong>Threat-sensitized closed loop</strong>
-              <span>Rapid expansion and sudden darkening strongly drive the modeled fly looming pathway.</span>
+              <strong>Closed-loop saber experiment</strong>
+              <span>Random blocks. No music. Blue saber on the left, red saber on the right.</span>
             </div>
           </div>
         </div>
         <div class="action-strip" aria-label="Current controller output">
           <span id="action-label">idle</span>
           <div class="action-bars">
-            <label>forward <i><b id="bar-forward"></b></i></label>
-            <label>left <i><b id="bar-left"></b></i></label>
-            <label>right <i><b id="bar-right"></b></i></label>
-            <label>use <i><b id="bar-use"></b></i></label>
+            <label>idle <i><b id="bar-idle"></b></i></label>
+            <label>left blue <i><b id="bar-left"></b></i></label>
+            <label>right red <i><b id="bar-right"></b></i></label>
           </div>
         </div>
       </article>
@@ -84,17 +84,16 @@
         <div class="panel-head compact">
           <div>
             <p class="kicker">MODELED FLY VISION</p>
-            <h2>LC4 / LPLC2 threat drive</h2>
+            <h2>LC4 / LPLC2 visual drive</h2>
           </div>
           <span id="vision-summary" class="muted">waiting for frames</span>
         </div>
-        <canvas id="retina-canvas" width="192" height="120" aria-label="Modeled fly looming and threat sensory drive"></canvas>
-        <div class="sector-grid threat-grid">
+        <canvas id="retina-canvas" width="600" height="420" aria-label="Modeled fly visual sensory drive"></canvas>
+        <div class="sector-grid">
           <div><span>left motion</span><b id="motion-left">0.000</b></div>
           <div><span>centre motion</span><b id="motion-center">0.000</b></div>
           <div><span>right motion</span><b id="motion-right">0.000</b></div>
-          <div><span>forward flow</span><b id="novelty">0.000</b></div>
-          <div class="threat-stat"><span>threat drive</span><b id="threat-drive">0.000</b></div>
+          <div><span>loom salience</span><b id="salience">0.000</b></div>
         </div>
       </article>
 
@@ -108,10 +107,12 @@
         </div>
         <canvas id="reward-canvas" width="520" height="170" aria-label="Reward history"></canvas>
         <div class="learning-grid">
+          <div><span>episode</span><b id="episode">0</b></div>
           <div><span>step reward</span><b id="step-reward">0.000</b></div>
+          <div><span>episode reward</span><b id="reward">0.00</b></div>
+          <div><span>best reward</span><b id="best-reward">0.00</b></div>
           <div><span>exploration ε</span><b id="epsilon">0.120</b></div>
           <div><span>policy updates</span><b id="updates">0</b></div>
-          <div><span>terminal proxy</span><b id="terminal-state">none</b></div>
         </div>
       </article>
 
@@ -119,26 +120,26 @@
         <div class="panel-head compact">
           <div>
             <p class="kicker">METHOD</p>
-            <h2>What “scary for the fly” means</h2>
+            <h2>What the fly actually controls</h2>
           </div>
         </div>
         <div class="method-columns">
           <div>
-            <h3>Measured / sourced</h3>
-            <p>Connectome topology, neuron positions, neuron metadata and LC4/LPLC2 receptive-field assignments come from the browser-ready FlyWire-derived dataset used by Fruit Fly Lab.</p>
-            <p>Freedoom runs through a WebAssembly Chocolate Doom build. The controller remains navigation-only, with no weapon-firing action.</p>
+            <h3>Environment</h3>
+            <p>Blocks are generated procedurally with random hand, position, speed, spacing and rotation. Blue targets occupy a random location in the left visual field and red targets a random location in the right, because the current connectome build models looming more faithfully than spectral colour. There is no song chart and no audio timing.</p>
+            <p>The smiling cube and both sabers are original procedural graphics. This project does not include Beat Saber code, music or art assets.</p>
           </div>
           <div>
-            <h3>Engineered threat model</h3>
-            <p>The software does not assume the simulated fly subjectively feels fear. Instead, rapid image expansion, abrupt darkening and strong local motion are amplified into looming stimuli intended to recruit escape/freeze-related activity more strongly.</p>
-            <p>The reinforcement readout still receives neural telemetry only. Full-frame game pixels are used for sensory encoding and environmental reward signals, not as direct policy inputs.</p>
+            <h3>Neural loop</h3>
+            <p>The full rendered frame is converted into spatial motion and looming stimuli for the fly-connectome simulator. The learned readout receives neural telemetry only.</p>
+            <p>The three available outputs are idle, swing the left blue saber, or swing the right red saber. Hidden block position, colour and timing are never passed directly to the policy.</p>
           </div>
         </div>
       </article>
     </section>
   </main>
 
-  <canvas id="feature-canvas" width="64" height="48" hidden></canvas>
+  <canvas id="feature-canvas" width="72" height="45" hidden></canvas>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
