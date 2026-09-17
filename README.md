@@ -27,7 +27,7 @@ The result should be described as a fly-connectome-driven controller, not as an 
 
 ## Learning
 
-Saber learning uses its own storage namespace (`flybrainsaber.*`) and does not reuse Doom or Flappy policy weights. Episodes reset automatically after 75 seconds or 18 misses while learned weights persist locally.
+Saber learning uses its own storage namespace (`flybrainsaber.*`) and does not reuse Doom or Flappy policy weights. The v2 controller uses a global 720 ms saber rearm lockout, moderate penalties for empty swings, stronger penalties for missed targets, large timing/accuracy-weighted hit rewards, and left/right symmetry augmentation to reduce one-hand policy collapse. Episodes reset automatically while learned weights persist locally.
 
 ## Run
 
