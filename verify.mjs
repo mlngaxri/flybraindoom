@@ -22,12 +22,23 @@ if (/state\.vision/.test(policy)) throw new Error('Policy module must not consum
 if (!app.includes("brain.postMessage({ cmd: 'vision', vision: state.vision })")) throw new Error('Visual encoder is not connected to the brain worker.');
 if (!app.includes('neuralFeatures(state.brainFrame)')) throw new Error('Policy is not driven from neural telemetry.');
 if (!app.includes("gameViewCanvas.id = 'game-view-canvas'")) throw new Error('Dedicated centered game presentation canvas is missing.');
-if (!app.includes('drawFullFrame(engineCanvas, featureCtx')) throw new Error('Fly vision is not sampling the complete centered framebuffer.');
+if (!app.includes('drawFullFrame(engineCanvas, featureCtx')) throw new Error('Fly vision is not sampling the complete framebuffer.');
 if (/height\s*-\s*6|usableH\s*=\s*h\s*-/.test(app)) throw new Error('Legacy bottom-row sensory crop reappeared.');
 if (!styles.includes('#game-view-canvas') || !styles.includes('#doom-canvas.engine-canvas')) throw new Error('Framebuffer presentation/isolation styles are missing.');
 if (!game.includes("'aspect_ratio_correct 1'")) throw new Error('Chocolate Doom aspect correction is not explicit.');
 if (!game.includes("'screenblocks 11'")) throw new Error('Doom full scene viewport is not enabled.');
-if (!app.includes('EXPERIMENT_KEY') || !app.includes('persistExperiment')) throw new Error('Experiment persistence is missing.');
+
+if (!html.includes('id="fullscreen-button"') || !html.includes('id="fullscreen-exit"')) throw new Error('Fullscreen controls are missing.');
+if (!app.includes('requestFullscreen') || !app.includes('exitFullscreen')) throw new Error('Fullscreen API wiring is missing.');
+if (!styles.includes('.game-wrap:fullscreen')) throw new Error('Fullscreen contain styling is missing.');
+
+if (!app.includes("EXPERIMENT_KEY = 'flybraindoom.experiment.v4'")) throw new Error('Experiment persistence is not on v4.');
+if (!policy.includes("POLICY_KEY = 'flybraindoom.policy.v4'")) throw new Error('Learner persistence is not on v4.');
+if (!app.includes('loopScore') || !app.includes("'circling-loss-proxy'")) throw new Error('Anti-circling detection is missing.');
+if (!app.includes("? 50 : -30")) throw new Error('High-magnitude terminal reinforcement is missing.');
+if (!app.includes('r -= .38 * circleEvidence')) throw new Error('Repeated-scene circle penalty is missing.');
+if (!app.includes('r -= .16 * v.rotation')) throw new Error('Rotation penalty is missing.');
+if (!policy.includes('Math.min(20, rawError)')) throw new Error('Learner error range does not support the stronger terminal signal.');
 
 const memory = new Map();
 globalThis.localStorage = {
@@ -46,7 +57,8 @@ const frame = {
 const x = neuralFeatures(frame);
 if (x.length !== 14 || [...x].some((v) => !Number.isFinite(v))) throw new Error('Neural feature vector is invalid.');
 const learner = new LinearQLearner(14, 7);
-learner.update(x, 0, 1, x, false);
+learner.update(x, 0, 50, x, true);
 if (learner.updates !== 1 || learner.weights[0].some((v) => !Number.isFinite(v))) throw new Error('Learner update failed.');
+if (!memory.has('flybraindoom.policy.v4') && learner.updates >= 20) throw new Error('v4 learner persistence failed.');
 
 console.log('verify: all checks passed');
