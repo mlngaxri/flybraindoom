@@ -69,39 +69,27 @@
         </div>
         <canvas id="brain-canvas" width="720" height="440" aria-label="Live fly brain activity"></canvas>
         <div class="brain-footer">
-          <div>
-            <span>turn bias</span>
-            <b id="turn-bias">0.000</b>
-          </div>
-          <div>
-            <span>escape</span>
-            <b id="escape-drive">0.000</b>
-          </div>
-          <div>
-            <span>freeze</span>
-            <b id="freeze-drive">0.000</b>
-          </div>
-          <div>
-            <span>sim time</span>
-            <b id="sim-time">0 ms</b>
-          </div>
+          <div><span>turn bias</span><b id="turn-bias">0.000</b></div>
+          <div><span>escape</span><b id="escape-drive">0.000</b></div>
+          <div><span>freeze</span><b id="freeze-drive">0.000</b></div>
+          <div><span>sim time</span><b id="sim-time">0 ms</b></div>
         </div>
       </article>
 
       <article class="panel retina-panel">
         <div class="panel-head compact">
           <div>
-            <p class="kicker">SENSORY ENCODER</p>
-            <h2>Fly view</h2>
+            <p class="kicker">MODELED FLY VISION</p>
+            <h2>LC4 / LPLC2 sensory drive</h2>
           </div>
           <span id="vision-summary" class="muted">waiting for frames</span>
         </div>
-        <canvas id="retina-canvas" width="192" height="120" aria-label="Downsampled fly sensory view"></canvas>
+        <canvas id="retina-canvas" width="192" height="120" aria-label="Modeled fly visual sensory drive"></canvas>
         <div class="sector-grid">
-          <div><span>left motion</span><b id="motion-left">0.000</b></div>
-          <div><span>centre motion</span><b id="motion-center">0.000</b></div>
-          <div><span>right motion</span><b id="motion-right">0.000</b></div>
-          <div><span>novelty</span><b id="novelty">0.000</b></div>
+          <div><span>left residual motion</span><b id="motion-left">0.000</b></div>
+          <div><span>centre residual motion</span><b id="motion-center">0.000</b></div>
+          <div><span>right residual motion</span><b id="motion-right">0.000</b></div>
+          <div><span>forward optic flow</span><b id="novelty">0.000</b></div>
         </div>
       </article>
 
@@ -116,7 +104,7 @@
         <canvas id="reward-canvas" width="520" height="170" aria-label="Reward history"></canvas>
         <div class="learning-grid">
           <div><span>step reward</span><b id="step-reward">0.000</b></div>
-          <div><span>exploration ε</span><b id="epsilon">0.180</b></div>
+          <div><span>exploration ε</span><b id="epsilon">0.120</b></div>
           <div><span>policy updates</span><b id="updates">0</b></div>
           <div><span>terminal proxy</span><b id="terminal-state">none</b></div>
         </div>
@@ -132,13 +120,13 @@
         <div class="method-columns">
           <div>
             <h3>Measured / sourced</h3>
-            <p>Connectome topology and neuron metadata are loaded from the browser-ready FlyWire dataset used by Fruit Fly Lab.</p>
+            <p>Connectome topology, neuron positions, neuron metadata and LC4/LPLC2 receptive-field assignments come from the browser-ready FlyWire-derived dataset used by Fruit Fly Lab.</p>
             <p>Freedoom runs through a WebAssembly Chocolate Doom build.</p>
           </div>
           <div>
             <h3>Engineered</h3>
-            <p>Game frames are reduced to motion and looming-like visual signals. A small reinforcement readout learns how neural activity maps to navigation controls.</p>
-            <p>Weapon firing is disabled. The agent can move, turn and use/open.</p>
+            <p>Doom frames are temporally adapted, separated into rotation and forward optic-flow components, then converted into spatial looming candidates that drive the simulator's LC4/LPLC2 encoder.</p>
+            <p>A small reinforcement readout learns from neural telemetry only. Learning state is saved locally across reloads. Weapon firing is disabled.</p>
           </div>
         </div>
       </article>
