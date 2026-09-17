@@ -1,14 +1,15 @@
-const POLICY_KEY = 'flybraindoom.policy.v2';
+const POLICY_KEY = 'flybraindoom.policy.v3';
 
 export class LinearQLearner {
   constructor(inputSize, actionCount) {
     this.inputSize = inputSize;
     this.actionCount = actionCount;
-    this.alpha = 0.025;
-    this.gamma = 0.96;
-    this.epsilon = 0.18;
-    this.minEpsilon = 0.035;
-    this.decay = 0.9996;
+    this.alpha = 0.022;
+    this.gamma = 0.965;
+    this.epsilon = 0.12;
+    this.minEpsilon = 0.025;
+    this.decay = 0.9997;
+    this.priorWeight = 0.28;
     this.updates = 0;
     this.weights = Array.from({ length: actionCount }, () => new Float64Array(inputSize));
     this.restore();
@@ -21,12 +22,13 @@ export class LinearQLearner {
     return sum;
   }
 
-  choose(x) {
+  choose(x, prior = null) {
     if (Math.random() < this.epsilon) return Math.floor(Math.random() * this.actionCount);
-    let best = 0, bestQ = -Infinity;
+    let best = 0, bestScore = -Infinity;
     for (let a = 0; a < this.actionCount; a++) {
-      const q = this.q(a, x);
-      if (q > bestQ) { best = a; bestQ = q; }
+      const biologicalPrior = prior && Number.isFinite(prior[a]) ? prior[a] : 0;
+      const score = this.q(a, x) + this.priorWeight * biologicalPrior;
+      if (score > bestScore) { best = a; bestScore = score; }
     }
     return best;
   }
@@ -43,12 +45,13 @@ export class LinearQLearner {
     for (let i = 0; i < w.length; i++) w[i] += this.alpha * error * prevX[i];
     this.epsilon = Math.max(this.minEpsilon, this.epsilon * this.decay);
     this.updates++;
-    if (this.updates % 75 === 0) this.persist();
+    if (this.updates % 25 === 0) this.persist();
   }
 
   persist() {
     try {
       localStorage.setItem(POLICY_KEY, JSON.stringify({
+        version: 3,
         epsilon: this.epsilon,
         updates: this.updates,
         weights: this.weights.map((w) => Array.from(w)),
@@ -60,17 +63,19 @@ export class LinearQLearner {
     try {
       const saved = JSON.parse(localStorage.getItem(POLICY_KEY) || 'null');
       if (!saved || !Array.isArray(saved.weights) || saved.weights.length !== this.actionCount) return;
-      this.weights = saved.weights.map((row) => Float64Array.from(row.slice(0, this.inputSize)));
-      if (Number.isFinite(saved.epsilon)) this.epsilon = saved.epsilon;
-      if (Number.isFinite(saved.updates)) this.updates = saved.updates;
+      const rows = saved.weights.map((row) => Array.isArray(row) ? row.slice(0, this.inputSize) : []);
+      if (rows.some((row) => row.length !== this.inputSize || row.some((v) => !Number.isFinite(v)))) return;
+      this.weights = rows.map((row) => Float64Array.from(row));
+      if (Number.isFinite(saved.epsilon)) this.epsilon = Math.max(this.minEpsilon, saved.epsilon);
+      if (Number.isFinite(saved.updates)) this.updates = Math.max(0, saved.updates | 0);
     } catch {}
   }
 
   reset() {
     this.weights = Array.from({ length: this.actionCount }, () => new Float64Array(this.inputSize));
-    this.epsilon = 0.18;
+    this.epsilon = 0.12;
     this.updates = 0;
-    localStorage.removeItem(POLICY_KEY);
+    try { localStorage.removeItem(POLICY_KEY); } catch {}
   }
 }
 
@@ -104,4 +109,28 @@ export function neuralFeatures(frame = {}) {
     clamp(sideMean('right') / 80, 0, 2),
     clamp(Number(frame.proboscis_drive) || 0, 0, 1),
   ]);
+}
+
+// This is a soft action prior from the actual descending-neuron readout. It does
+// not bypass the connectome: every value here is derived from neural telemetry.
+export function neuralActionPrior(frame = {}, actionCount = 7) {
+  const ch = frame.channels || {};
+  const turn = clamp(Number(ch.turn_bias) || 0, -1, 1);
+  const freeze = clamp(Number(ch.stop_freeze) || 0, 0, 1);
+  const escape = clamp(Math.max(Number(ch.escape_takeoff) || 0, Number(ch.escape_long_mode) || 0), 0, 1);
+  const backward = clamp(Number(ch.backward_walk) || 0, 0, 1);
+
+  const left = Math.max(0, -turn);
+  const right = Math.max(0, turn);
+  const move = clamp(0.12 + escape * 0.55 - freeze * 0.8 - backward * 0.35, 0, 1);
+  const prior = [
+    move,
+    left,
+    right,
+    clamp(move * 0.7 + left * 0.7, 0, 1),
+    clamp(move * 0.7 + right * 0.7, 0, 1),
+    0,
+    clamp(freeze + backward * 0.25, 0, 1),
+  ];
+  return prior.slice(0, actionCount);
 }
