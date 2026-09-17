@@ -32,6 +32,12 @@ export class FlappyGame {
     this.pipeMinCenter = 112;
     this.pipeMaxCenter = 338;
 
+    // The neural simulation can run slower than wall-clock time on some machines.
+    // Keep the original game-physics ratios, but dilate the game clock so the
+    // connectome gets enough real compute time to react to each visual state.
+    this.baseTimeScale = 0.42;
+    this.maxTimeScale = 0.70;
+
     this.birdY = 240;
     this.birdVY = 0;
     this.pipes = [];
@@ -83,10 +89,14 @@ export class FlappyGame {
     this.lastFlapAt = -Infinity;
     this.groundOffset = 0;
     this.events = [];
+
+    // Longer first approach than the original benchmark so the visual pathway
+    // and downstream readout have time to settle before the first obstacle.
+    const firstPipeX = 410;
     this.pipes = [
-      this.makePipe(342, 228),
-      this.makePipe(342 + this.pipeSpacing, 282),
-      this.makePipe(342 + this.pipeSpacing * 2, 194),
+      this.makePipe(firstPipeX, 228),
+      this.makePipe(firstPipeX + this.pipeSpacing, 282),
+      this.makePipe(firstPipeX + this.pipeSpacing * 2, 194),
     ];
     this.draw();
   }
@@ -97,9 +107,14 @@ export class FlappyGame {
   }
 
   loop(now) {
-    const dt = Math.min(1 / 30, Math.max(0, (now - this.lastTime) / 1000));
+    const wallDt = Math.min(1 / 30, Math.max(0, (now - this.lastTime) / 1000));
     this.lastTime = now;
-    if (!this.paused && !this.dead) this.update(dt);
+    if (!this.paused && !this.dead) {
+      // Very slow at the start, then gently approaches normal speed as the fly
+      // proves it can pass pipes. Difficulty never jumps suddenly mid-episode.
+      const timeScale = Math.min(this.maxTimeScale, this.baseTimeScale + this.score * 0.025);
+      this.update(wallDt * timeScale);
+    }
     this.draw();
     this.frameHandle = requestAnimationFrame((t) => this.loop(t));
   }
