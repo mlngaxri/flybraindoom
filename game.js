@@ -19,6 +19,14 @@ export class DoomGame {
     this.canvas = canvas;
     this.module = null;
     this.actionIndex = ACTIONS.length - 1;
+    this.restartTimers = [];
+    this.watchdogTimer = null;
+    this.watchdogCanvas = null;
+    this.watchdogCtx = null;
+    this.watchdogPrev = null;
+    this.lastVisualChangeAt = performance.now();
+    this.lastAutoRestartAt = -Infinity;
+    this.bootedAt = 0;
   }
 
   async boot() {
@@ -71,7 +79,10 @@ export class DoomGame {
     }
 
     this.module = module;
+    this.bootedAt = performance.now();
+    this.lastVisualChangeAt = this.bootedAt;
     this.canvas.focus();
+    this.startWatchdog();
   }
 
   dispatch(key, down) {
@@ -84,17 +95,90 @@ export class DoomGame {
     this.canvas.dispatchEvent(event);
   }
 
+  releaseAll() {
+    for (const key of ['ArrowUp', 'ArrowLeft', 'ArrowRight', 'Space', 'Enter']) this.dispatch(key, false);
+    this.actionIndex = ACTIONS.length - 1;
+  }
+
+  pulse(key, duration = 90) {
+    this.dispatch(key, true);
+    const timer = setTimeout(() => this.dispatch(key, false), duration);
+    this.restartTimers.push(timer);
+  }
+
   act(index) {
     for (const key of ACTIONS[this.actionIndex].keys) this.dispatch(key, false);
     this.actionIndex = index;
     for (const key of ACTIONS[index].keys) this.dispatch(key, true);
   }
 
-  respawn() {
-    for (const key of ['Space', 'Enter']) {
-      this.dispatch(key, true);
-      setTimeout(() => this.dispatch(key, false), 45);
+  respawn(reason = 'episode-reset') {
+    const now = performance.now();
+    if (now - this.lastAutoRestartAt < 2200) return;
+    this.lastAutoRestartAt = now;
+    this.lastVisualChangeAt = now;
+
+    for (const timer of this.restartTimers) clearTimeout(timer);
+    this.restartTimers = [];
+    this.releaseAll();
+    this.canvas.focus();
+
+    // Doom restarts a defeated player via the USE key. Pulse it repeatedly so the
+    // command lands after the death animation/state transition rather than only once.
+    const sequence = [
+      [180, 'Space', 100],
+      [650, 'Space', 110],
+      [1150, 'Space', 120],
+      [1650, 'Enter', 100],
+      [2050, 'Space', 120],
+    ];
+    for (const [delay, key, duration] of sequence) {
+      const timer = setTimeout(() => this.pulse(key, duration), delay);
+      this.restartTimers.push(timer);
     }
+
+    window.dispatchEvent(new CustomEvent('flydoom:autorespawn', { detail: { reason } }));
+  }
+
+  startWatchdog() {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    this.watchdogCanvas = document.createElement('canvas');
+    this.watchdogCanvas.width = 32;
+    this.watchdogCanvas.height = 20;
+    this.watchdogCtx = this.watchdogCanvas.getContext('2d', { willReadFrequently: true });
+    this.watchdogPrev = null;
+
+    this.watchdogTimer = setInterval(() => {
+      if (!this.module || !this.watchdogCtx) return;
+      const now = performance.now();
+      if (now - this.bootedAt < 6000 || now - this.lastAutoRestartAt < 5000) return;
+
+      try {
+        const c = this.watchdogCtx;
+        c.drawImage(this.canvas, 0, 0, 32, 20);
+        const rgba = c.getImageData(0, 0, 32, 20).data;
+        const gray = new Uint8Array(32 * 20);
+        for (let p = 0, i = 0; p < gray.length; p++, i += 4) {
+          gray[p] = Math.round(rgba[i] * .299 + rgba[i + 1] * .587 + rgba[i + 2] * .114);
+        }
+
+        if (this.watchdogPrev) {
+          let diff = 0;
+          for (let i = 0; i < gray.length; i++) diff += Math.abs(gray[i] - this.watchdogPrev[i]) / 255;
+          diff /= gray.length;
+          if (diff > .006) this.lastVisualChangeAt = now;
+        } else {
+          this.lastVisualChangeAt = now;
+        }
+        this.watchdogPrev = gray;
+
+        // If the rendered game has been essentially motionless for several seconds,
+        // recover automatically. This catches defeated/dead screens and hard stalls.
+        if (now - this.lastVisualChangeAt > 6500) this.respawn('visual-stall');
+      } catch (error) {
+        console.warn('[doom] restart watchdog disabled for this frame', error);
+      }
+    }, 500);
   }
 }
 
