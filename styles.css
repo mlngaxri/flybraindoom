@@ -38,8 +38,9 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
 .panel-head.compact { min-height: 64px; }
 .tiny-stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; color: var(--soft); font-size: 11px; }
 .tiny-stats b { color: #e8eeeb; font-variant-numeric: tabular-nums; font-weight: 600; }
-.game-wrap { position: relative; aspect-ratio: 16 / 10; background: #000; display: grid; place-items: center; overflow: hidden; }
-#doom-canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; background: #000; }
+/* Classic Doom renders 320x200 pixels intended for a 4:3 CRT display. */
+.game-wrap { position: relative; aspect-ratio: 4 / 3; background: #000; display: grid; place-items: center; overflow: hidden; }
+#doom-canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; background: #000; outline: none; }
 .game-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(29,36,34,.38), rgba(0,0,0,.88)); pointer-events: none; }
 .game-overlay[hidden] { display: none; }
 .game-overlay div { display: grid; gap: 6px; text-align: center; color: #dce2df; }
