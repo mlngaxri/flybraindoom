@@ -38,6 +38,8 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
 .panel-head.compact { min-height: 64px; }
 .tiny-stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; color: var(--soft); font-size: 11px; }
 .tiny-stats b { color: #e8eeeb; font-variant-numeric: tabular-nums; font-weight: 600; }
+.game-head-controls { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+#fullscreen-button { white-space: nowrap; }
 .game-wrap {
   position: relative;
   aspect-ratio: 4 / 3;
@@ -64,6 +66,36 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
   opacity: 0 !important;
   pointer-events: none !important;
 }
+.fullscreen-exit {
+  display: none;
+  position: absolute;
+  z-index: 10;
+  top: 16px;
+  right: 16px;
+  background: rgba(9, 12, 11, .82);
+  backdrop-filter: blur(8px);
+}
+.game-wrap:fullscreen,
+.game-wrap:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.game-wrap:fullscreen #game-view-canvas,
+.game-wrap:-webkit-full-screen #game-view-canvas {
+  width: min(100vw, calc(100vh * 4 / 3));
+  height: min(100vh, calc(100vw * 3 / 4));
+  max-width: 100vw;
+  max-height: 100vh;
+  flex: 0 0 auto;
+}
+.game-wrap:fullscreen .fullscreen-exit,
+.game-wrap:-webkit-full-screen .fullscreen-exit { display: block; }
 .game-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(29,36,34,.38), rgba(0,0,0,.88)); pointer-events: none; }
 .game-overlay[hidden] { display: none; }
 .game-overlay div { display: grid; gap: 6px; text-align: center; color: #dce2df; }
@@ -110,4 +142,5 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
   .brain-footer { grid-template-columns: repeat(2, 1fr); }
   .method-columns { grid-template-columns: 1fr; }
   .method-columns > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .game-head-controls { align-items: flex-end; flex-direction: column; }
 }
