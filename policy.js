@@ -1,15 +1,15 @@
-const POLICY_KEY = 'flybraindoom.policy.v5';
+const POLICY_KEY = 'flybraindoom.policy.v4';
 
 export class LinearQLearner {
   constructor(inputSize, actionCount) {
     this.inputSize = inputSize;
     this.actionCount = actionCount;
-    this.alpha = 0.008;
-    this.gamma = 0.985;
-    this.epsilon = 0.12;
-    this.minEpsilon = 0.015;
-    this.decay = 0.99965;
-    this.priorWeight = 0.30;
+    this.alpha = 0.009;
+    this.gamma = 0.97;
+    this.epsilon = 0.10;
+    this.minEpsilon = 0.02;
+    this.decay = 0.99975;
+    this.priorWeight = 0.34;
     this.updates = 0;
     this.weights = Array.from({ length: actionCount }, () => new Float64Array(inputSize));
     this.restore();
@@ -24,15 +24,11 @@ export class LinearQLearner {
 
   choose(x, prior = null) {
     if (Math.random() < this.epsilon) return Math.floor(Math.random() * this.actionCount);
-    let best = 0;
-    let bestScore = -Infinity;
+    let best = 0, bestScore = -Infinity;
     for (let a = 0; a < this.actionCount; a++) {
       const biologicalPrior = prior && Number.isFinite(prior[a]) ? prior[a] : 0;
       const score = this.q(a, x) + this.priorWeight * biologicalPrior;
-      if (score > bestScore) {
-        best = a;
-        bestScore = score;
-      }
+      if (score > bestScore) { best = a; bestScore = score; }
     }
     return best;
   }
@@ -45,7 +41,7 @@ export class LinearQLearner {
       for (let a = 0; a < this.actionCount; a++) nextBest = Math.max(nextBest, this.q(a, nextX));
     }
     const rawError = reward + (terminal ? 0 : this.gamma * nextBest) - this.q(action, prevX);
-    const error = Math.max(-25, Math.min(25, rawError));
+    const error = Math.max(-20, Math.min(20, rawError));
     const w = this.weights[action];
     for (let i = 0; i < w.length; i++) w[i] += this.alpha * error * prevX[i];
     this.epsilon = Math.max(this.minEpsilon, this.epsilon * this.decay);
@@ -56,7 +52,7 @@ export class LinearQLearner {
   persist() {
     try {
       localStorage.setItem(POLICY_KEY, JSON.stringify({
-        version: 5,
+        version: 4,
         epsilon: this.epsilon,
         updates: this.updates,
         weights: this.weights.map((w) => Array.from(w)),
@@ -67,7 +63,7 @@ export class LinearQLearner {
   restore() {
     try {
       const saved = JSON.parse(localStorage.getItem(POLICY_KEY) || 'null');
-      if (!saved || saved.version !== 5 || !Array.isArray(saved.weights) || saved.weights.length !== this.actionCount) return;
+      if (!saved || saved.version !== 4 || !Array.isArray(saved.weights) || saved.weights.length !== this.actionCount) return;
       const rows = saved.weights.map((row) => Array.isArray(row) ? row.slice(0, this.inputSize) : []);
       if (rows.some((row) => row.length !== this.inputSize || row.some((v) => !Number.isFinite(v)))) return;
       this.weights = rows.map((row) => Float64Array.from(row));
@@ -78,7 +74,7 @@ export class LinearQLearner {
 
   reset() {
     this.weights = Array.from({ length: this.actionCount }, () => new Float64Array(this.inputSize));
-    this.epsilon = 0.12;
+    this.epsilon = 0.10;
     this.updates = 0;
     try { localStorage.removeItem(POLICY_KEY); } catch {}
   }
@@ -116,16 +112,23 @@ export function neuralFeatures(frame = {}) {
   ]);
 }
 
-// Soft prior only. The reinforcement learner still decides the final action,
-// and it only receives values produced by the simulated fly nervous system.
-export function neuralActionPrior(frame = {}, actionCount = 2) {
+export function neuralActionPrior(frame = {}, actionCount = 7) {
   const ch = frame.channels || {};
-  const escape = clamp(Math.max(Number(ch.escape_takeoff) || 0, Number(ch.escape_long_mode) || 0), 0, 1);
+  const turn = clamp(Number(ch.turn_bias) || 0, -1, 1);
   const freeze = clamp(Number(ch.stop_freeze) || 0, 0, 1);
+  const escape = clamp(Math.max(Number(ch.escape_takeoff) || 0, Number(ch.escape_long_mode) || 0), 0, 1);
   const backward = clamp(Number(ch.backward_walk) || 0, 0, 1);
-  const meanRate = clamp((Number(frame.mean_rate_hz) || 0) / 20, 0, 1);
-
-  const flap = clamp(0.08 + escape * 0.68 + meanRate * 0.16 - freeze * 0.35, 0, 1);
-  const coast = clamp(0.18 + freeze * 0.55 + backward * 0.22 - escape * 0.18, 0, 1);
-  return [flap, coast].slice(0, actionCount);
+  const left = Math.max(0, -turn);
+  const right = Math.max(0, turn);
+  const move = clamp(0.12 + escape * 0.55 - freeze * 0.8 - backward * 0.35, 0, 1);
+  const prior = [
+    move,
+    left,
+    right,
+    clamp(move * 0.7 + left * 0.7, 0, 1),
+    clamp(move * 0.7 + right * 0.7, 0, 1),
+    0,
+    clamp(freeze + backward * 0.25, 0, 1),
+  ];
+  return prior.slice(0, actionCount);
 }
