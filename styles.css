@@ -38,9 +38,32 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
 .panel-head.compact { min-height: 64px; }
 .tiny-stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; color: var(--soft); font-size: 11px; }
 .tiny-stats b { color: #e8eeeb; font-variant-numeric: tabular-nums; font-weight: 600; }
-/* Classic Doom renders 320x200 pixels intended for a 4:3 CRT display. */
-.game-wrap { position: relative; aspect-ratio: 4 / 3; background: #000; display: grid; place-items: center; overflow: hidden; }
-#doom-canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; background: #000; outline: none; }
+.game-wrap {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+#game-view-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+  image-rendering: pixelated;
+}
+#doom-canvas.engine-canvas {
+  position: absolute !important;
+  left: -10000px !important;
+  top: 0 !important;
+  width: 320px !important;
+  height: 200px !important;
+  max-width: none !important;
+  max-height: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .game-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(29,36,34,.38), rgba(0,0,0,.88)); pointer-events: none; }
 .game-overlay[hidden] { display: none; }
 .game-overlay div { display: grid; gap: 6px; text-align: center; color: #dce2df; }
@@ -58,7 +81,14 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
 .brain-footer span, .sector-grid span, .learning-grid span { display: block; color: #68736f; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
 .brain-footer b, .sector-grid b, .learning-grid b { display: block; margin-top: 5px; color: #dde3e0; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 550; }
 .retina-panel, .learning-panel { min-height: 320px; }
-#retina-canvas { width: 100%; height: 200px; display: block; background: #020303; image-rendering: pixelated; }
+#retina-canvas {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  display: block;
+  margin: 0 auto;
+  background: #020303;
+}
 .sector-grid, .learning-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); }
 #reward-canvas { width: 100%; height: 200px; display: block; }
 .methods-panel { grid-column: 1 / -1; }
@@ -68,6 +98,7 @@ button.primary { background: var(--hot); color: #0a0c0b; border-color: var(--hot
 .method-columns p { color: #909b97; font-size: 12px; line-height: 1.65; max-width: 75ch; }
 .method-columns p + p { margin-top: 8px; }
 .muted { color: #6d7874; font-size: 11px; }
+#feature-canvas { display: none !important; }
 @media (max-width: 900px) {
   .topbar { align-items: flex-start; flex-direction: column; }
   .header-actions { justify-content: flex-start; }
