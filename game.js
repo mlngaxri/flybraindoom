@@ -58,9 +58,11 @@ export class SaberGame {
     this.episodeTime = 0;
     this.episodeEnded = false;
     this.actionIndex = 0;
+    this.rearm = 0;
+    this.rearmDuration = .72;
     this.swing = {
-      left: { active: false, t: 0, duration: .36, hit: false, cooldown: 0 },
-      right: { active: false, t: 0, duration: .36, hit: false, cooldown: 0 },
+      left: { active: false, t: 0, duration: .30, hit: false, cooldown: 0, wrongTarget: false },
+      right: { active: false, t: 0, duration: .30, hit: false, cooldown: 0, wrongTarget: false },
     };
     this.bodySignal = { turn: 0, escape: 0, freeze: 0 };
   }
@@ -78,7 +80,7 @@ export class SaberGame {
     this.fragments = [];
     this.events = [];
     this.time = 0;
-    this.spawnIn = .65 + this.rng() * .85;
+    this.spawnIn = .72 + this.rng() * .68;
     this.score = 0;
     this.combo = 0;
     this.hits = 0;
@@ -86,12 +88,14 @@ export class SaberGame {
     this.episodeTime = 0;
     this.episodeEnded = false;
     this.actionIndex = 0;
+    this.rearm = 0;
     for (const hand of ['left', 'right']) {
       const s = this.swing[hand];
       s.active = false;
       s.t = 0;
       s.hit = false;
       s.cooldown = 0;
+      s.wrongTarget = false;
     }
     this.render();
   }
@@ -113,31 +117,44 @@ export class SaberGame {
       // Fruit Fly Lab's current browser model is strongest for motion/looming rather than
       // faithful spectral colour. Keep the two block classes randomly lateralized so
       // the fly can infer the correct hand from real left/right visual activity.
-      x: hand === 'left' ? this.randomRange(-.76, -.14) : this.randomRange(.14, .76),
-      y: this.randomRange(-.02, .46),
-      z: this.randomRange(16.5, 20.5),
-      size: this.randomRange(.22, .31),
-      speed: this.randomRange(4.8, 7.2),
+      x: hand === 'left' ? this.randomRange(-.84, -.14) : this.randomRange(.14, .84),
+      y: this.randomRange(-.10, .58),
+      z: this.randomRange(15.5, 20.0),
+      size: this.randomRange(.16, .22),
+      speed: this.randomRange(7.0, 10.8),
+      vx: this.randomRange(-.20, .20),
+      vy: this.randomRange(-.13, .15),
       rot: this.randomRange(-Math.PI, Math.PI),
-      spin: this.randomRange(-1.2, 1.2),
+      spin: this.randomRange(-1.8, 1.8),
       sliced: false,
       missed: false,
     });
   }
 
   act(index) {
-    this.actionIndex = clamp(index | 0, 0, ACTIONS.length - 1);
-    if (this.actionIndex === 1) this.beginSwing('left');
-    if (this.actionIndex === 2) this.beginSwing('right');
+    const next = clamp(index | 0, 0, ACTIONS.length - 1);
+    if (next === 0) { this.actionIndex = 0; return true; }
+    const accepted = this.beginSwing(next === 1 ? 'left' : 'right');
+    if (accepted) this.actionIndex = next;
+    return accepted;
   }
 
   beginSwing(hand) {
     const s = this.swing[hand];
-    if (s.active || s.cooldown > 0) return;
+    if (this.rearm > 0 || s.active || s.cooldown > 0) return false;
     s.active = true;
     s.t = 0;
     s.hit = false;
-    s.cooldown = .13;
+    s.cooldown = .10;
+    this.rearm = this.rearmDuration;
+    const other = hand === 'left' ? 'right' : 'left';
+    s.wrongTarget = this.blocks.some((b) => !b.sliced && !b.missed && b.hand === other && b.z >= 2.35 && b.z <= 4.10);
+    return true;
+  }
+
+  getActionMask() {
+    const ready = this.rearm <= 0 && !this.swing.left.active && !this.swing.right.active;
+    return [true, ready, ready];
   }
 
   saberSweepPoint(hand, p) {
@@ -154,22 +171,23 @@ export class SaberGame {
     let bestDist = Infinity;
     for (const block of this.blocks) {
       if (block.sliced || block.missed || block.hand !== hand) continue;
-      if (block.z < 2.35 || block.z > 3.65) continue;
+      if (block.z < 2.55 || block.z > 3.35) continue;
       const dx = block.x - point.x;
       const dy = block.y - point.y;
       const dz = (block.z - point.z) * .45;
       const d = Math.hypot(dx, dy, dz);
       if (d < bestDist) { bestDist = d; best = block; }
     }
-    if (!best || bestDist > .72) return false;
+    if (!best || bestDist > .48) return false;
 
     best.sliced = true;
-    const timing = clamp(1 - Math.abs(best.z - 2.95) / .8, 0, 1);
+    const timing = clamp(1 - Math.abs(best.z - 2.95) / .40, 0, 1);
+    const accuracy = clamp(1 - bestDist / .48, 0, 1);
     this.hits++;
     this.combo++;
     const points = Math.round(80 + timing * 70 + Math.min(100, this.combo * 2));
     this.score += points;
-    this.events.push({ type: 'hit', hand, timing, points, combo: this.combo });
+    this.events.push({ type: 'hit', hand, timing, accuracy, points, combo: this.combo });
     this.spawnFragments(best);
     return true;
   }
@@ -196,10 +214,11 @@ export class SaberGame {
     this.time += dt;
     this.episodeTime += dt;
     this.spawnIn -= dt;
+    this.rearm = Math.max(0, this.rearm - dt);
 
     if (this.spawnIn <= 0) {
       this.spawnBlock();
-      this.spawnIn = this.randomRange(.62, 1.65);
+      this.spawnIn = this.randomRange(.68, 1.25);
     }
 
     for (const hand of ['left', 'right']) {
@@ -210,10 +229,11 @@ export class SaberGame {
       const p = clamp(s.t / s.duration, 0, 1);
       if (!s.hit && p > .08 && p < .94) s.hit = this.trySlice(hand, p);
       if (p >= 1) {
-        if (!s.hit) this.events.push({ type: 'air', hand });
+        if (!s.hit) this.events.push({ type: 'air', hand, wrongTarget: s.wrongTarget });
         s.active = false;
         s.t = 0;
         s.hit = false;
+        s.wrongTarget = false;
       }
     }
 
@@ -221,6 +241,12 @@ export class SaberGame {
       if (block.sliced || block.missed) continue;
       block.z -= block.speed * dt;
       block.rot += block.spin * dt;
+      block.x += block.vx * dt;
+      block.y += block.vy * dt;
+      const minX = block.hand === 'left' ? -.88 : .12;
+      const maxX = block.hand === 'left' ? -.12 : .88;
+      if (block.x < minX || block.x > maxX) { block.vx *= -1; block.x = clamp(block.x, minX, maxX); }
+      if (block.y < -.14 || block.y > .62) { block.vy *= -1; block.y = clamp(block.y, -.14, .62); }
       if (block.z < 1.75) {
         block.missed = true;
         this.misses++;
@@ -240,9 +266,9 @@ export class SaberGame {
     }
     this.fragments = this.fragments.filter((f) => f.life > 0 && f.z > .7);
 
-    if (this.episodeTime >= 75 || this.misses >= 18) {
+    if (this.episodeTime >= 90 || this.misses >= 24) {
       this.episodeEnded = true;
-      this.events.push({ type: 'episode-end', reason: this.misses >= 18 ? 'miss-limit' : 'time-limit' });
+      this.events.push({ type: 'episode-end', reason: this.misses >= 24 ? 'miss-limit' : 'time-limit' });
     }
   }
 
@@ -255,7 +281,11 @@ export class SaberGame {
   project(x, y, z) {
     const zz = Math.max(.55, z);
     const scale = this.focal / zz;
-    return { x: this.width * .5 + x * scale, y: this.height * .49 - y * scale, scale };
+    return {
+      x: this.width * .5 + x * scale,
+      y: this.height * .49 - y * scale,
+      scale,
+    };
   }
 
   drawGlowLine(x1, y1, x2, y2, color, width) {
@@ -281,6 +311,7 @@ export class SaberGame {
     g.addColorStop(.55, '#07101a');
     g.addColorStop(1, '#020307');
     c.fillStyle = g; c.fillRect(0, 0, w, h);
+
     const vx = w * .5, vy = h * .47;
     c.save();
     c.strokeStyle = 'rgba(61,139,198,.15)';
@@ -309,19 +340,34 @@ export class SaberGame {
     const depth = Math.max(2, s * .22);
     const [rx, ry] = rotate2(depth, -depth * .58, block.rot * .35);
     const x = p.x, y = p.y;
+
     c.save();
     c.shadowColor = block.color;
     c.shadowBlur = Math.min(28, 5 + s * .13);
     c.fillStyle = block.hand === 'left' ? 'rgba(30,101,166,.92)' : 'rgba(163,38,61,.92)';
     c.fillRect(x - s/2, y - s/2, s, s);
     c.shadowBlur = 0;
+
     c.fillStyle = block.hand === 'left' ? 'rgba(67,168,255,.38)' : 'rgba(255,79,103,.38)';
-    c.beginPath(); c.moveTo(x-s/2,y-s/2); c.lineTo(x-s/2+rx,y-s/2+ry); c.lineTo(x+s/2+rx,y-s/2+ry); c.lineTo(x+s/2,y-s/2); c.closePath(); c.fill();
+    c.beginPath();
+    c.moveTo(x-s/2, y-s/2);
+    c.lineTo(x-s/2+rx, y-s/2+ry);
+    c.lineTo(x+s/2+rx, y-s/2+ry);
+    c.lineTo(x+s/2, y-s/2);
+    c.closePath(); c.fill();
+
     c.fillStyle = block.hand === 'left' ? 'rgba(12,68,119,.55)' : 'rgba(117,25,42,.55)';
-    c.beginPath(); c.moveTo(x+s/2,y-s/2); c.lineTo(x+s/2+rx,y-s/2+ry); c.lineTo(x+s/2+rx,y+s/2+ry); c.lineTo(x+s/2,y+s/2); c.closePath(); c.fill();
+    c.beginPath();
+    c.moveTo(x+s/2, y-s/2);
+    c.lineTo(x+s/2+rx, y-s/2+ry);
+    c.lineTo(x+s/2+rx, y+s/2+ry);
+    c.lineTo(x+s/2, y+s/2);
+    c.closePath(); c.fill();
+
     c.strokeStyle = block.color;
     c.lineWidth = Math.max(1.5, s * .035);
     c.strokeRect(x - s/2, y - s/2, s, s);
+
     c.fillStyle = 'rgba(255,255,255,.78)';
     c.beginPath(); c.arc(x, y, Math.max(2, s * .055), 0, Math.PI * 2); c.fill();
     c.restore();
@@ -332,9 +378,14 @@ export class SaberGame {
     for (const f of this.fragments) {
       const p = this.project(f.x, f.y, f.z);
       const alpha = clamp(f.life / f.maxLife, 0, 1);
-      c.save(); c.globalAlpha = alpha; c.fillStyle = f.color; c.shadowColor = f.color; c.shadowBlur = 8;
+      c.save();
+      c.globalAlpha = alpha;
+      c.fillStyle = f.color;
+      c.shadowColor = f.color;
+      c.shadowBlur = 8;
       const s = Math.max(2, p.scale * .025);
-      c.fillRect(p.x - s/2, p.y - s/2, s, s); c.restore();
+      c.fillRect(p.x - s/2, p.y - s/2, s, s);
+      c.restore();
     }
   }
 
@@ -344,7 +395,12 @@ export class SaberGame {
     const baseX = hand === 'left' ? -.24 : .24;
     const baseY = -.42;
     const baseZ = 2.18;
-    if (!s.active) return { base: { x: baseX, y: baseY, z: baseZ }, tip: { x: hand === 'left' ? -.58 : .58, y: .28, z: 2.72 } };
+    if (!s.active) {
+      return {
+        base: { x: baseX, y: baseY, z: baseZ },
+        tip: { x: hand === 'left' ? -.58 : .58, y: .28, z: 2.72 },
+      };
+    }
     const q = this.saberSweepPoint(hand, p);
     return { base: { x: baseX, y: baseY, z: baseZ }, tip: { x: q.x, y: q.y, z: q.z } };
   }
@@ -357,10 +413,15 @@ export class SaberGame {
       const color = hand === 'left' ? BLUE : RED;
       const width = Math.max(5, 11 * (2.8 / pose.base.z));
       this.drawGlowLine(a.x, a.y, b.x, b.y, color, width);
+
       const c = this.ctx;
-      c.save(); c.strokeStyle = '#cfd8de'; c.lineWidth = Math.max(5, width * .65); c.beginPath();
+      c.save();
+      c.strokeStyle = '#cfd8de';
+      c.lineWidth = Math.max(5, width * .65);
+      c.beginPath();
       const hx = lerp(a.x, b.x, .14), hy = lerp(a.y, b.y, .14);
-      c.moveTo(a.x, a.y); c.lineTo(hx, hy); c.stroke(); c.restore();
+      c.moveTo(a.x, a.y); c.lineTo(hx, hy); c.stroke();
+      c.restore();
     }
   }
 
@@ -370,24 +431,62 @@ export class SaberGame {
     const turn = this.bodySignal.turn * .12;
     const cx = this.width * .5 + turn * 45;
     const cy = this.height * .78 + bob - this.bodySignal.escape * 7;
-    const s = 76, d = 14;
-    c.save(); c.shadowColor = 'rgba(122,247,210,.32)'; c.shadowBlur = 20; c.fillStyle = '#dfe9e5'; c.fillRect(cx-s/2,cy-s/2,s,s); c.shadowBlur = 0;
-    c.fillStyle = '#aab9b3'; c.beginPath(); c.moveTo(cx+s/2,cy-s/2); c.lineTo(cx+s/2+d,cy-s/2-d*.55); c.lineTo(cx+s/2+d,cy+s/2-d*.55); c.lineTo(cx+s/2,cy+s/2); c.closePath(); c.fill();
-    c.fillStyle = '#eef5f2'; c.beginPath(); c.moveTo(cx-s/2,cy-s/2); c.lineTo(cx-s/2+d,cy-s/2-d*.55); c.lineTo(cx+s/2+d,cy-s/2-d*.55); c.lineTo(cx+s/2,cy-s/2); c.closePath(); c.fill();
-    c.fillStyle = '#15222a'; c.beginPath(); c.arc(cx-17,cy-8,5.5,0,Math.PI*2); c.fill(); c.beginPath(); c.arc(cx+17,cy-8,5.5,0,Math.PI*2); c.fill();
-    c.strokeStyle = '#15222a'; c.lineWidth = 4; c.lineCap = 'round'; c.beginPath(); c.arc(cx,cy+4,20,.18*Math.PI,.82*Math.PI); c.stroke(); c.restore();
+    const s = 76;
+    const d = 14;
+
+    c.save();
+    c.shadowColor = 'rgba(122,247,210,.32)';
+    c.shadowBlur = 20;
+    c.fillStyle = '#dfe9e5';
+    c.fillRect(cx - s/2, cy - s/2, s, s);
+    c.shadowBlur = 0;
+
+    c.fillStyle = '#aab9b3';
+    c.beginPath();
+    c.moveTo(cx+s/2, cy-s/2);
+    c.lineTo(cx+s/2+d, cy-s/2-d*.55);
+    c.lineTo(cx+s/2+d, cy+s/2-d*.55);
+    c.lineTo(cx+s/2, cy+s/2);
+    c.closePath(); c.fill();
+
+    c.fillStyle = '#eef5f2';
+    c.beginPath();
+    c.moveTo(cx-s/2, cy-s/2);
+    c.lineTo(cx-s/2+d, cy-s/2-d*.55);
+    c.lineTo(cx+s/2+d, cy-s/2-d*.55);
+    c.lineTo(cx+s/2, cy-s/2);
+    c.closePath(); c.fill();
+
+    c.fillStyle = '#15222a';
+    c.beginPath(); c.arc(cx-17, cy-8, 5.5, 0, Math.PI*2); c.fill();
+    c.beginPath(); c.arc(cx+17, cy-8, 5.5, 0, Math.PI*2); c.fill();
+    c.strokeStyle = '#15222a';
+    c.lineWidth = 4;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.arc(cx, cy+4, 20, .18*Math.PI, .82*Math.PI);
+    c.stroke();
+    c.restore();
   }
 
   drawHUD() {
     const c = this.ctx;
-    c.save(); c.font = '600 14px ui-monospace, SFMono-Regular, Menlo, monospace'; c.fillStyle = 'rgba(235,244,249,.86)';
-    c.fillText(`SCORE ${this.score.toString().padStart(5,'0')}`,24,32); c.fillText(`COMBO ${this.combo}`,24,52);
-    c.textAlign = 'right'; c.fillStyle = BLUE; c.fillText('LEFT = BLUE',this.width-24,32); c.fillStyle = RED; c.fillText('RIGHT = RED',this.width-24,52); c.restore();
+    c.save();
+    c.font = '600 14px ui-monospace, SFMono-Regular, Menlo, monospace';
+    c.fillStyle = 'rgba(235,244,249,.86)';
+    c.fillText(`SCORE ${this.score.toString().padStart(5,'0')}`, 24, 32);
+    c.fillText(`COMBO ${this.combo}`, 24, 52);
+    c.textAlign = 'right';
+    c.fillStyle = BLUE;
+    c.fillText('LEFT = BLUE', this.width - 24, 32);
+    c.fillStyle = RED;
+    c.fillText('RIGHT = RED', this.width - 24, 52);
+    c.restore();
   }
 
   render() {
     this.drawTunnel();
-    const sorted = [...this.blocks].filter(b => !b.sliced && b.z > .6).sort((a,b) => b.z-a.z);
+    const sorted = [...this.blocks].filter(b => !b.sliced && b.z > .6).sort((a, b) => b.z - a.z);
     for (const block of sorted) this.drawCube(block);
     this.drawFragments();
     this.drawAvatar();
