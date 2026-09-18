@@ -1,0 +1,31 @@
+{
+  "active": {
+    "brain": {
+      "name": "Fruit Fly Lab browser simulator",
+      "repository": "vaibhavkedarisetti/fruit-fly-lab",
+      "commit": "26672e06427c12c61536ce1bd93dae7442944681",
+      "role": "temporary runnable connectome baseline"
+    },
+    "body": {
+      "name": "Fly Brain Arena JS body",
+      "role": "temporary runnable arena baseline"
+    }
+  },
+  "target": {
+    "brain": {
+      "name": "MaleCNS v1.0 via fly.ai browser export",
+      "referenceRepository": "alextitonis/fly.ai",
+      "referenceCommit": "95a3dbcb05241b0a5c07028ca8ad945b23fbbe6e",
+      "neurons": 166700,
+      "connections": 25582938
+    },
+    "body": {
+      "name": "NeuroMechFly v2 / FlyGym 2.1.0",
+      "repository": "NeLy-EPFL/flygym",
+      "release": "v2.1.0",
+      "releaseCommit": "ca65a510c2afe6ac61c51df4f274c8d190c2f95f",
+      "generatedWasmAssetsCommit": "0884af08981994543634563d95e9b1eb49945082",
+      "physics": "MuJoCo 3.9.0 WebAssembly"
+    }
+  }
+}

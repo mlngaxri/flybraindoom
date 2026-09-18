@@ -4,142 +4,83 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>Fly Brain Saber</title>
-  <meta name="description" content="A random 3D saber benchmark controlled by a simulated Drosophila connectome." />
+  <title>Fly Brain Arena</title>
+  <meta name="description" content="Two independent Drosophila connectome simulations competing in a closed-loop browser arena." />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <main class="app-shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">CONNECTOME × RANDOM 3D SABER CONTROL</p>
-        <h1>Fly Brain Saber</h1>
+<main class="shell">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">TWO CONNECTOMES · CLOSED LOOP · SELF-PLAY</p>
+      <h1>Fly Brain Arena</h1>
+      <p class="sub">Two simulated fly nervous systems see only their own sensory stream and learn against each other.</p>
+    </div>
+    <div class="actions">
+      <span id="system-status" class="status warn">loading fly A</span>
+      <button id="start" class="primary" disabled>Start arena</button>
+      <button id="pause" disabled>Pause</button>
+      <button id="reset">Reset learning</button>
+    </div>
+  </header>
+
+  <section class="model-strip">
+    <div><span>RUNNING BRAIN</span><b>Fruit Fly Lab / FlyWire browser baseline</b></div>
+    <div><span>TARGET BRAIN</span><b>MaleCNS v1.0 · 166,700 neurons</b></div>
+    <div><span>TARGET BODY</span><b>NeuroMechFly v2 · MuJoCo WASM</b></div>
+    <div><span>COMBAT</span><b>non-graphic contact / knockback</b></div>
+  </section>
+
+  <section class="layout">
+    <article class="panel arena-panel">
+      <div class="panel-head">
+        <div><p class="kicker">SHARED WORLD</p><h2>1v1 contact arena</h2></div>
+        <div class="score"><b id="score-a">0</b><span>FLY A</span><i>:</i><span>FLY B</span><b id="score-b">0</b></div>
       </div>
-      <div class="header-actions">
-        <span id="brain-status" class="status status-warn">brain loading</span>
-        <span id="game-status" class="status">game idle</span>
-        <button id="start-button" class="primary">Start experiment</button>
-        <button id="pause-button" disabled>Pause</button>
+      <div class="arena-wrap">
+        <canvas id="arena" width="1000" height="650" aria-label="Two-fly battle arena"></canvas>
+        <div id="overlay" class="overlay"><strong>Brains are loading</strong><span>The arena starts only after both independent connectome workers are ready.</span></div>
       </div>
-    </header>
+      <div class="arena-footer">
+        <span>round <b id="round">1</b></span>
+        <span>time <b id="time">0.0s</b></span>
+        <span>physics <b>browser baseline</b></span>
+        <span>policy input <b>neural telemetry only</b></span>
+      </div>
+    </article>
 
-    <section class="grid">
-      <article class="panel game-panel">
-        <div class="panel-head">
-          <div>
-            <p class="kicker">ENVIRONMENT</p>
-            <h2>Random saber arena</h2>
-          </div>
-          <div class="game-head-controls">
-            <div class="tiny-stats">
-              <span>score <b id="score">0</b></span>
-              <span>combo <b id="combo">0</b></span>
-              <span>hits <b id="hits">0</b></span>
-              <span>misses <b id="misses">0</b></span>
-            </div>
-            <button id="fullscreen-button" type="button">Fullscreen game</button>
-          </div>
-        </div>
-        <div class="game-wrap">
-          <canvas id="game-canvas" width="960" height="600" tabindex="0" aria-label="Random 3D saber benchmark"></canvas>
-          <button id="fullscreen-exit" class="fullscreen-exit" type="button">Exit fullscreen</button>
-          <div id="game-overlay" class="game-overlay">
-            <div>
-              <strong>Closed-loop saber experiment</strong>
-              <span>Random blocks. No music. Blue saber on the left, red saber on the right.</span>
-            </div>
-          </div>
-        </div>
-        <div class="action-strip" aria-label="Current controller output">
-          <span id="action-label">idle</span>
-          <div class="action-bars">
-            <label>idle <i><b id="bar-idle"></b></i></label>
-            <label>left blue <i><b id="bar-left"></b></i></label>
-            <label>right red <i><b id="bar-right"></b></i></label>
-          </div>
-        </div>
-      </article>
+    <article class="panel fly-panel blue">
+      <div class="panel-head"><div><p class="kicker">FLY A</p><h2>Independent brain A</h2></div><span id="status-a" class="status warn">booting</span></div>
+      <canvas id="brain-a" width="520" height="260"></canvas>
+      <div class="stats">
+        <div><span>action</span><b id="action-a">idle</b></div><div><span>active</span><b id="active-a">0</b></div>
+        <div><span>rate</span><b id="rate-a">0.00 Hz</b></div><div><span>stability</span><b id="stability-a">100</b></div>
+        <div><span>contacts</span><b id="contacts-a">0</b></div><div><span>ε</span><b id="epsilon-a">0.160</b></div>
+        <div><span>reward</span><b id="reward-a">0.00</b></div><div><span>distance</span><b id="distance-a">—</b></div>
+      </div>
+    </article>
 
-      <article class="panel brain-panel">
-        <div class="panel-head">
-          <div>
-            <p class="kicker">NEURAL STATE</p>
-            <h2>Whole-brain activity</h2>
-          </div>
-          <div class="tiny-stats">
-            <span>active <b id="active-neurons">0</b></span>
-            <span>rate <b id="mean-rate">0.00 Hz</b></span>
-          </div>
-        </div>
-        <canvas id="brain-canvas" width="720" height="440" aria-label="Live fly brain activity"></canvas>
-        <div class="brain-footer">
-          <div><span>turn bias</span><b id="turn-bias">0.000</b></div>
-          <div><span>escape</span><b id="escape-drive">0.000</b></div>
-          <div><span>freeze</span><b id="freeze-drive">0.000</b></div>
-          <div><span>sim time</span><b id="sim-time">0 ms</b></div>
-        </div>
-      </article>
+    <article class="panel fly-panel red">
+      <div class="panel-head"><div><p class="kicker">FLY B</p><h2>Independent brain B</h2></div><span id="status-b" class="status warn">waiting</span></div>
+      <canvas id="brain-b" width="520" height="260"></canvas>
+      <div class="stats">
+        <div><span>action</span><b id="action-b">idle</b></div><div><span>active</span><b id="active-b">0</b></div>
+        <div><span>rate</span><b id="rate-b">0.00 Hz</b></div><div><span>stability</span><b id="stability-b">100</b></div>
+        <div><span>contacts</span><b id="contacts-b">0</b></div><div><span>ε</span><b id="epsilon-b">0.160</b></div>
+        <div><span>reward</span><b id="reward-b">0.00</b></div><div><span>distance</span><b id="distance-b">—</b></div>
+      </div>
+    </article>
 
-      <article class="panel retina-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="kicker">MODELED FLY VISION</p>
-            <h2>LC4 / LPLC2 visual drive</h2>
-          </div>
-          <span id="vision-summary" class="muted">waiting for frames</span>
-        </div>
-        <canvas id="retina-canvas" width="600" height="420" aria-label="Modeled fly visual sensory drive"></canvas>
-        <div class="sector-grid">
-          <div><span>left motion</span><b id="motion-left">0.000</b></div>
-          <div><span>centre motion</span><b id="motion-center">0.000</b></div>
-          <div><span>right motion</span><b id="motion-right">0.000</b></div>
-          <div><span>loom salience</span><b id="salience">0.000</b></div>
-        </div>
-      </article>
-
-      <article class="panel learning-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="kicker">REINFORCEMENT</p>
-            <h2>Learning telemetry</h2>
-          </div>
-          <button id="reset-learning">Reset learning</button>
-        </div>
-        <canvas id="reward-canvas" width="520" height="170" aria-label="Reward history"></canvas>
-        <div class="learning-grid">
-          <div><span>episode</span><b id="episode">0</b></div>
-          <div><span>step reward</span><b id="step-reward">0.000</b></div>
-          <div><span>episode reward</span><b id="reward">0.00</b></div>
-          <div><span>best reward</span><b id="best-reward">0.00</b></div>
-          <div><span>exploration ε</span><b id="epsilon">0.120</b></div>
-          <div><span>policy updates</span><b id="updates">0</b></div>
-        </div>
-      </article>
-
-      <article class="panel methods-panel">
-        <div class="panel-head compact">
-          <div>
-            <p class="kicker">METHOD</p>
-            <h2>What the fly actually controls</h2>
-          </div>
-        </div>
-        <div class="method-columns">
-          <div>
-            <h3>Environment</h3>
-            <p>Blocks are generated procedurally with random hand, position, speed, spacing and rotation. Blue targets occupy a random location in the left visual field and red targets a random location in the right, because the current connectome build models looming more faithfully than spectral colour. There is no song chart and no audio timing.</p>
-            <p>The smiling cube and both sabers are original procedural graphics. This project does not include Beat Saber code, music or art assets.</p>
-          </div>
-          <div>
-            <h3>Neural loop</h3>
-            <p>The full rendered frame is converted into spatial motion and looming stimuli for the fly-connectome simulator. The learned readout receives neural telemetry only.</p>
-            <p>The three available outputs are idle, swing the left blue saber, or swing the right red saber. Hidden block position, colour and timing are never passed directly to the policy.</p>
-          </div>
-        </div>
-      </article>
-    </section>
-  </main>
-
-  <canvas id="feature-canvas" width="72" height="45" hidden></canvas>
-  <script type="module" src="./app.js"></script>
+    <article class="panel method-panel">
+      <div class="panel-head"><div><p class="kicker">SCIENTIFIC BOUNDARY</p><h2>What is real, and what is still an adapter</h2></div></div>
+      <div class="method-grid">
+        <div><h3>Closed loop now</h3><p>Each fly has its own connectome worker, its own neural state, its own learned readout and its own egocentric opponent stimulus. The policy never receives opponent coordinates, distance, score or arena state directly. Those hidden values are used only to create sensory stimuli, resolve contact and calculate reinforcement.</p></div>
+        <div><h3>High-fidelity target</h3><p>The repository also pins a MaleCNS WebGPU adapter contract and a FlyGym 2.1.0 MuJoCo-WASM adapter contract. They are not labelled active until the actual MaleCNS browser weights and a two-fly NeuroMechFly shared-world model are loaded and validated.</p></div>
+        <div><h3>Competition</h3><p>“Fighting” means approach, retreat, turning, lunging, contact and knockback. Stability is a game variable, not biological injury. Contact generates a modeled aversive sensory pulse; this does not imply subjective pain or consciousness.</p></div>
+      </div>
+    </article>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
 </body>
 </html>

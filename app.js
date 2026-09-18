@@ -1,493 +1,149 @@
-import { ACTIONS, SaberGame } from './game.js';
+import { ACTIONS, FlyArena } from './arena.js';
 import { LinearQLearner, neuralActionPrior, neuralFeatures } from './policy.js';
 
-const params = new URLSearchParams(location.search);
-const AUTO = params.get('autostart') === '1';
-const EXPERIMENT_KEY = 'flybrainsaber.experiment.v2';
-const GRID_COLS = 12;
-const GRID_ROWS = 8;
-const H_FOV_DEG = 100;
-const V_FOV_DEG = 70;
-const $ = (s) => document.querySelector(s);
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-const gameCanvas = $('#game-canvas');
-const gameWrap = gameCanvas.closest('.game-wrap');
-const featureCanvas = $('#feature-canvas');
-const retinaCanvas = $('#retina-canvas');
-const brainCanvas = $('#brain-canvas');
-const rewardCanvas = $('#reward-canvas');
-const featureCtx = featureCanvas.getContext('2d', { willReadFrequently: true });
-const retinaCtx = retinaCanvas.getContext('2d');
-const brainCtx = brainCanvas.getContext('2d');
-const rewardCtx = rewardCanvas.getContext('2d');
-
-const ui = {
-  start: $('#start-button'), pause: $('#pause-button'), overlay: $('#game-overlay'),
-  fullscreen: $('#fullscreen-button'), fullscreenExit: $('#fullscreen-exit'),
-  brainStatus: $('#brain-status'), gameStatus: $('#game-status'),
-  score: $('#score'), combo: $('#combo'), hits: $('#hits'), misses: $('#misses'),
-  episode: $('#episode'), reward: $('#reward'), best: $('#best-reward'), action: $('#action-label'),
-  active: $('#active-neurons'), mean: $('#mean-rate'), turn: $('#turn-bias'), escape: $('#escape-drive'), freeze: $('#freeze-drive'), sim: $('#sim-time'),
-  ml: $('#motion-left'), mc: $('#motion-center'), mr: $('#motion-right'), salience: $('#salience'), vision: $('#vision-summary'),
-  step: $('#step-reward'), epsilon: $('#epsilon'), updates: $('#updates'), reset: $('#reset-learning'),
-  bars: { idle: $('#bar-idle'), left: $('#bar-left'), right: $('#bar-right') },
+const $=(id)=>document.getElementById(id);
+const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const arenaCanvas=$('arena');
+const arena=new FlyArena(arenaCanvas);
+const ui={
+  system:$('system-status'),start:$('start'),pause:$('pause'),reset:$('reset'),overlay:$('overlay'),
+  round:$('round'),time:$('time'),scoreA:$('score-a'),scoreB:$('score-b'),
+  fly:[0,1].map((i)=>({
+    status:$(`status-${i?'b':'a'}`),brain:$(`brain-${i?'b':'a'}`),action:$(`action-${i?'b':'a'}`),
+    active:$(`active-${i?'b':'a'}`),rate:$(`rate-${i?'b':'a'}`),stability:$(`stability-${i?'b':'a'}`),
+    contacts:$(`contacts-${i?'b':'a'}`),epsilon:$(`epsilon-${i?'b':'a'}`),reward:$(`reward-${i?'b':'a'}`),distance:$(`distance-${i?'b':'a'}`),
+  })),
 };
 
-const state = {
-  game: new SaberGame(gameCanvas),
-  running: false,
-  gameReady: false,
-  brainReady: false,
-  brainFrame: {},
-  brainPositions: null,
-  brainCount: 0,
-  previousRGBA: null,
-  adaptation: null,
-  previousFeatures: null,
-  vision: { left: 0, center: 0, right: 0, salience: 0, darkOnset: 0, stimuli: [], cells: [] },
-  episode: 0,
-  episodeReward: 0,
-  bestReward: 0,
-  actionIndex: 0,
-  actionUntil: 0,
-  rewards: [],
-  raf: 0,
-  lastFrameAt: 0,
-  lastControlAt: 0,
-  restored: false,
-};
+const agents=[0,1].map((i)=>({
+  id:i?'B':'A', worker:null,ready:false,frame:{},positions:null,bounds:null,
+  learner:new LinearQLearner(14,ACTIONS.length,i?'B':'A'),
+  previousFeatures:null,action:0,actionUntil:0,reward:0,
+}));
 
-const learner = new LinearQLearner(14, ACTIONS.length);
-let brain = null;
+let running=false,raf=0,lastFrame=0,lastControl=0;
 
-function setStatus(el, text, tone = '') {
-  el.textContent = text;
-  el.className = `status${tone ? ` status-${tone}` : ''}`;
-}
+function status(el,text,tone=''){el.textContent=text;el.className=`status${tone?` ${tone}`:''}`;}
 
-function restoreExperiment() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(EXPERIMENT_KEY) || 'null');
-    if (!saved) return;
-    state.episode = Number.isFinite(saved.episode) ? Math.max(0, saved.episode | 0) : 0;
-    state.bestReward = Number.isFinite(saved.bestReward) ? saved.bestReward : 0;
-    state.rewards = Array.isArray(saved.rewards) ? saved.rewards.filter(Number.isFinite).slice(-600) : [];
-    state.restored = true;
-  } catch {}
-}
-
-function persistExperiment() {
-  learner.persist();
-  try {
-    localStorage.setItem(EXPERIMENT_KEY, JSON.stringify({
-      version: 1,
-      episode: state.episode,
-      bestReward: state.bestReward,
-      rewards: state.rewards.slice(-600),
-      savedAt: Date.now(),
-    }));
-  } catch {}
-}
-
-restoreExperiment();
-ui.episode.textContent = state.episode.toLocaleString();
-ui.best.textContent = state.bestReward.toFixed(2);
-ui.epsilon.textContent = learner.epsilon.toFixed(3);
-ui.updates.textContent = learner.updates.toLocaleString();
-
-async function enterFullscreen() {
-  try {
-    if (document.fullscreenElement === gameWrap) return;
-    if (gameWrap.requestFullscreen) await gameWrap.requestFullscreen({ navigationUI: 'hide' });
-    else if (gameWrap.webkitRequestFullscreen) gameWrap.webkitRequestFullscreen();
-  } catch (error) { console.warn('fullscreen request failed', error); }
-}
-
-async function exitFullscreen() {
-  try {
-    if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
-    else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
-  } catch (error) { console.warn('fullscreen exit failed', error); }
-}
-
-function setupBrain() {
-  brain = new Worker('./brain-worker.js', { type: 'module' });
-  brain.onmessage = ({ data: msg }) => {
-    if (msg.type === 'status') setStatus(ui.brainStatus, msg.message, 'warn');
-    if (msg.type === 'progress') {
-      const pct = msg.total ? ` ${Math.min(100, Math.round(msg.loaded / msg.total * 100))}%` : '';
-      setStatus(ui.brainStatus, `${msg.label}${pct}`, 'warn');
-    }
-    if (msg.type === 'ready') {
-      state.brainReady = true;
-      state.brainCount = msg.n;
-      state.brainPositions = msg.positions;
-      setStatus(ui.brainStatus, `${msg.n.toLocalString() } neurons ready`, 'ok');
-      if (state.running) brain.postMessage({ cmd: 'play' });
-    }
-    if (msg.type === 'frame') {
-      state.brainFrame = msg.frame;
-      updateBrainUI();
-    }
-    if (msg.type === 'error') {
-      setStatus(ui.brainStatus, 'brain error', 'error');
-      console.error(msg.message);
-    }
-  };
-  brain.postMessage({ cmd: 'boot' });
-}
-setupBrain();
-
-function sampleVision() {
-  if (!state.gameReady) return;
-  const w = featureCanvas.width, h = featureCanvas.height;
-  featureCtx.drawImage(gameCanvas, 0, 0, w, h);
-  const rgba = featureCtx.getImageData(0, 0, w, h).data;
-  const pixelCount = w * h;
-  if (!state.adaptation || state.adaptation.length !== pixelCount) state.adaptation = new Float32Array(pixelCount);
-
-  if (!state.previousRGBA) {
-    state.previousRGBA = new Uint8ClampedArray(rgba);
-    for (let p = 0, i = 0; p < pixelCount; p++, i += 4) {
-      state.adaptation[p] = (rgba[i] * .299 + rgba[i+1] * .587 + rgba[i+2] * .114) / 255;
-    }
-    return;
-  }
-
-  const motionSums = new Float64Array(GRID_COLS * GRID_ROWS);
-  const darkSums = new Float64Array(GRID_COLS * GRID_ROWS);
-  const lumSums = new Float64Array(GRID_COLS * GRID_ROWS);
-  const counts = new Uint32Array(GRID_COLS * GRID_ROWS);
-  let left = 0, centre = 0, right = 0;
-  let lc = 0, cc = 0, rc = 0;
-  let totalMotion = 0, totalDark = 0;
-
-  for (let y = 0; y < h; y++) {
-    const gy = Math.min(GRID_ROWS - 1, Math.floor(y * GRID_ROWS / h));
-    for (let x = 0; x < w; x++) {
-      const p = y * w + x;
-      const i = p * 4;
-      const dr = Math.abs(rgba[i] - state.previousRGBA[i]) / 255;
-      const dg = Math.abs(rgba[i+1] - state.previousRGBA[i+1]) / 255;
-      const db = Math.abs(rgba[i+2] - state.previousRGBA[i+2]) / 255;
-      const motion = (dr + dg + db) / 3;
-      const lum = (rgba[i] * .299 + rgba[i+1] * .587 + rgba[i+2] * .114) / 255;
-      const dark = Math.max(0, state.adaptation[p] - lum);
-      state.adaptation[p] += (lum - state.adaptation[p]) * .055;
-      const gx = Math.min(GRID_COLS - 1, Math.floor(x * GRID_COLS / w));
-      const gi = gy * GRID_COLS + gx;
-      motionSums[gi] += motion;
-      darkSums[gi] += dark;
-      lumSums[gi] += lum;
-      counts[gi]++;
-      totalMotion += motion;
-      totalDark += dark;
-      if (x < w / 3) { left += motion; lc++; }
-      else if (x < w * 2 / 3) { centre += motion; cc++; }
-      else { right += motion; rc++; }
-    }
-  }
-
-  left /= Math.max(1, lc);
-  centre /= Math.max(1, cc);
-  right /= Math.max(1, rc);
-  const meanMotion = totalMotion / pixelCount;
-  const darkOnset = totalDark / pixelCount;
-  const salience = clamp(meanMotion * 5.4 + darkOnset * 3.0, 0, 1);
-  const cells = [];
-  let stimuli = [];
-
-  for (let gy = 0; gy < GRID_ROWS; gy++) {
-    for (let gx = 0; gx < GRID_COLS; gx++) {
-      const gi = gy * GRID_COLS + gx;
-      const motion = motionSums[gi] / Math.max(1, counts[gi]);
-      const dark = darkSums[gi] / Math.max(1, counts[gi]);
-      const lum = lumSums[gi] / Math.max(1, counts[gi]);
-      const drive = clamp((motion - .004) * 7.0 + dark * 2.5, 0, 1);
-      const localSalience = clamp(drive * .72 + dark * 2.2, 0, 1);
-      cells.push({ gx, gy, lum, drive, salience: localSalience });
-      if (drive < .03) continue;
-      stimuli.push({
-        azimuth_deg: ((gx + .5) / GRID_COLS - .5) * H_FOV_DEG,
-        elevation_deg: (.5 - (gy + .5) / GRID_ROWS) * V_FOV_DEG,
-        strength: clamp(drive * (1 + salience * .32), 0, 1),
-        salience: localSalience,
-      });
-    }
-  }
-  stimuli.sort((a,b) => b.strength - a.strength);
-  stimuli = stimuli.slice(0, 18);
-
-  state.previousRGBA = new Uint8ClampedArray(rgba);
-  state.vision = { left, center: centre, right, salience, darkOnset, stimuli, cells };
-  renderFlyView(cells, stimuli, salience);
-  ui.ml.textContent = left.toFixed(3);
-  ui.mc.textContent = centre.toFixed(3);
-  ui.mr.textContent = right.toFixed(3);
-  ui.salience.textContent = salience.toFixed(3);
-  ui.vision.textContent = `${stimuli.length} active receptive fields · visual only`;
-  if (brain && state.brainReady) brain.postMessage({ cmd: 'vision', vision: state.vision });
-}
-
-function renderFlyView(cells, stimuli, salience) {
-  const w = retinaCanvas.width, h = retinaCanvas.height;
-  retinaCtx.fillStyle = '#020408'; retinaCtx.fillRect(0, 0, w, h);
-  const cw = w / GRID_COLS, ch = h / GRID_ROWS;
-  for (const cell of cells) {
-    const cx = (cell.gx + .5) * cw, cy = (cell.gy + .5) * ch;
-    const r = Math.min(cw, ch) * .34;
-    const d = clamp(cell.drive, 0, 1);
-    const s = clamp(cell.salience, 0, 1);
-    const base = Math.round(clamp(cell.lum * 150, 0, 150));
-    retinaCtx.beginPath(); retinaCtx.arc(cx, cy, r, 0, Math.PI * 2);
-    retinaCtx.fillStyle = `rgb(${Math.round(base * .35 + s * 55)}, ${Math.round(base * .45 + d * 115)}, ${Math.round(base * .6 + d * 145)})`;
-    retinaCtx.fill();
-  }
-  for (const s of stimuli) {
-    const x = (s.azimuth_deg / H_FOV_DEG + .5) * w, y = (.5 - s.elevation_deg / V_FOV_DEG) * h;
-    const r = 4 + s.strength * 16;
-    retinaCtx.beginPath(); retinaCtx.arc(x, y, r, 0, Math.PI * 2);
-    retinaCtx.strokeStyle = `rgba(134,247,210,${.2 + s.strength * .75})`;
-    retinaCtx.lineWidth = 1.5 + s.strength * 3; retinaCtx.stroke();
-  }
-  retinaCtx.fillStyle = 'rgba(230,241,247,.75)';
-  retinaCtx.font = '16px ui-monospace, monospace';
-  retinaCtx.fillText(`loom salience ${salience.toFixed(2)}`, 12, h-14);
-}
-
-function rewardFromEvents(events) {
-  let r = 0;
-  let terminal = false;
-  for (const e of events) {
-    if (e.type === 'hit') {
-      const timing = clamp(Number(e.timing) || 0, 0, 1);
-      const accuracy = clamp(Number(e.accuracy) || 0, 0, 1);
-      const combo = Math.min(12, Math.max(0, Number(e.combo) || 0));
-      r += 6.4 + timing * 2.2 + accuracy * 1.4 + combo * .06;
-    }
-    if (e.type === 'impact') r -= 4.6 * clamp(Number(e.severity) || 1, .5, 1.25);
-    if (e.type === 'air') r -= e.wrongTarget ? .72 : .32;
-    if (e.type === 'episode-end') terminal = true;
-  }
-  return { reward: clamp(r, -12, 12), terminal };
-}
-
-function setAction(index) {
-  state.actionIndex = index;
-  state.game.act(index);
-  const name = ACTIONS[index].name;
-  ui.action.textContent = name;
-  ui.bars.idle.style.width = index === 0 ? '100%' : '0%';
-  ui.bars.left.style.width = index === 1 ? '100%' : '0%';
-  ui.bars.right.style.width = index === 2 ? '100%' : '0%';
-}
-
-function resetEpisode(reason = 'episode-end') {
-  state.bestReward = Math.max(state.bestReward, state.episodeReward);
-  state.episode++;
-  state.episodeReward = 0;
-  state.previousFeatures = null;
-  state.previousRGBA = null;
-  state.adaptation = null;
-  state.actionIndex = 0;
-  state.actionUntil = 0;
-  state.game.reset();
-  if (brain) brain.postMessage({ cmd: 'reset', seed: state.episode * 97 });
-  ui.episode.textContent = state.episode.toLocaleString();
-  ui.reward.textContent = '0.00';
-  ui.best.textContent = state.bestReward.toFixed(2);
-  setStatus(ui.gameStatus, `running · ${reason}`, 'ok');
-  persistExperiment();
-}
-
-function control(now) {
-  sampleVision();
-  if (!state.brainReady || !Number.isFinite(state.brainFrame.t_ms) || state.brainFrame.t_ms <= 0) return;
-  const x = neuralFeatures(state.brainFrame);
-  const events = state.game.consumeEvents();
-  for (const e of events) {
-    if (e.type === 'impact' && brain && state.brainReady) {
-      brain.postMessage({ cmd: 'aversive', side: e.hand, strength: clamp(Number(e.severity) || 1, 0, 1) });
-    }
-  }
-  const outcome = rewardFromEvents(events);
-  const r = outcome.reward;
-
-  if (state.previousFeatures) learner.update(state.previousFeatures, state.actionIndex, r, x, outcome.terminal);
-  state.previousFeatures = x;
-  state.episodeReward += r;
-  state.rewards.push(r);
-  if (state.rewards.length > 2000) state.rewards.splice(0, 500);
-
-  ui.step.textContent = r.toFixed(3);
-  ui.reward.textContent = state.episodeReward.toFixed(2);
-  ui.epsilon.textContent = learner.epsilon.toFixed(3);
-  ui.updates.textContent = learner.updates.toLocaleString();
-
-  if (outcome.terminal) return resetEpisode(events.find(e => e.type === 'episode-end')?.reason || 'episode-end');
-  if (now >= state.actionUntil) {
-    const prior = neuralActionPrior(state.brainFrame, ACTIONS.length);
-    const mask = state.game.getActionMask();
-    const nextAction = learner.choose(x, prior, mask);
-    setAction(nextAction);
-    // Idle is sampled quickly for timing. A committed swing remains the credited action
-    // through its full motion, then the game's global rearm mask forces a wait period.
-    state.actionUntil = now + (nextAction === 0 ? 70 + Math.random() * 55 : 315 + Math.random() * 35);
-  }
-}
-
-function updateBrainUI() {
-  const f = state.brainFrame, ch = f.channels || {};
-  ui.active.textContent = Number(f.active_neurons || 0).toLocaleString();
-  ui.mean.textContent = `${Number(f.mean_rate_hz || 0).toFixed(2)} Hz`;
-  ui.turn.textContent = Number(ch.turn_bias || 0).toFixed(3);
-  ui.escape.textContent = Math.max(Number(ch.escape_takeoff || 0), Number(ch.escape_long_mode || 0)).toFixed(3);
-  ui.freeze.textContent = Number(ch.stop_freeze || 0).toFixed(3);
-  ui.sim.textContent = `${Math.round(f.t_ms || 0)} ms`;
-  state.game.setBodySignal(Number(ch.turn_bias || 0), Math.max(Number(ch.escape_takeoff || 0), Number(ch.escape_long_mode || 0)), Number(ch.stop_freeze || 0));
-}
-
-function drawBrain() {
-  const c = brainCtx, w = brainCanvas.width, h = brainCanvas.height;
-  c.fillStyle = '#06090c'; c.fillRect(0, 0, w, h);
-  if (!state.brainPositions || !state.brainFrame.active_idx) {
-    c.fillStyle = '#71808d'; c.font = '12px monospace'; c.fillText('loading connectome…', 18, 28); return;
-  }
-  const p = state.brainPositions, n = state.brainCount;
-  const stride = Math.max(1, Math.floor(n / 4300));
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (let i = 0; i < n; i += stride) {
-    const x = p[i*3], y = p[i*3+1];
-    if (!Number.isFinite(x+y)) continue;
-    minX = Math.min(minX,x); maxX = Math.max(maxX,x); minY = Math.min(minY,y); maxY = Math.max(maxY,y);
-  }
-  const scale = Math.min((w-40)/Math.max(1,maxX-minX),(h-40)/Math.max(1,maxY-minY));
-  const xy = (i) => [20+(p[i*3]-minX)*scale,20+(p[i*3+1]-minY)*scale];
-  c.fillStyle = 'rgba(145,164,174,.13)';
-  for (let i = 0; i < n; i += stride) { const [x,y] = xy(i); c.fillRect(x,y,1,1); }
-  c.fillStyle = '#86f7d2';
-  for (const i of state.brainFrame.active_idx) {
-    if (i >= n) continue;
-    const [x,y] = xy(i); c.fillRect(x-1,y-1,2.5,2.5);
-  }
-}
-
-function drawReward() {
-  const c = rewardCtx, w = rewardCanvas.width, h = rewardCanvas.height;
-  c.fillStyle = '#070a0e'; c.fillRect(0,0,w,h);
-  c.strokeStyle = '#1f2a33'; c.beginPath(); c.moveTo(0,h/2); c.lineTo(w,h/2); c.stroke();
-  const v = state.rewards.slice(-240);
-  if (v.length < 2) return;
-  let lo = Math.min(-5, ...v), hi = Math.max(5, ...v);
-  if (hi-lo < 1e-6) hi = lo+1;
-  c.strokeStyle = '#86f7d2'; c.lineWidth = 1.5; c.beginPath();
-  v.forEach((r,i) => {
-    const x = i/(v.length-1)*w;
-    const y = h-(r-lo)/(hi-lo)*h;
-    i ? c.lineTo(x,y) : c.moveTo(x,y);
+function bootBrain(i){
+  return new Promise((resolve,reject)=>{
+    const a=agents[i];
+    const w=new Worker('./brain-worker.js',{type:'module'});a.worker=w;
+    w.onmessage=({data:m})=>{
+      if(m.type==='status')status(ui.fly[i].status,m.message,'warn');
+      if(m.type==='progress'){
+        const p=m.total?` ${Math.min(100,Math.round(m.loaded/m.total*100))}%`:'';
+        status(ui.fly[i].status,`${m.label}${p}`,'warn');
+      }
+      if(m.type==='ready'){
+        a.ready=true;a.positions=m.positions;a.bounds=brainBounds(m.positions);
+        status(ui.fly[i].status,`${Number(m.n).toLocaleString()} neurons`,'ok');
+        resolve();
+      }
+      if(m.type==='frame'){a.frame=m.frame||{};updateAgentUI(i);}
+      if(m.type==='error'){status(ui.fly[i].status,'brain error','error');reject(new Error(m.message));}
+    };
+    w.onerror=(e)=>reject(e.error||new Error(e.message));
+    w.postMessage({cmd:'boot'});
   });
-  c.stroke();
 }
 
-function updateGameStats() {
-  ui.score.textContent = state.game.score.toLocaleString();
-  ui.combo.textContent = state.game.combo.toLocaleString();
-  ui.hits.textContent = state.game.hits.toLocalString();
-  ui.misses.textContent = state.game.misses.toLocaleString();
+async function bootAll(){
+  try{
+    ui.system.textContent='loading fly A';
+    await bootBrain(0);
+    ui.system.textContent='loading fly B';
+    status(ui.fly[1].status,'booting','warn');
+    await bootBrain(1);
+    status(ui.system,'two brains ready','ok');
+    ui.start.disabled=false;
+    ui.overlay.querySelector('strong').textContent='Two independent brains ready';
+    ui.overlay.querySelector('span').textContent='Start the arena to begin closed-loop self-play.';
+  }catch(e){console.error(e);status(ui.system,'brain load failed','error');ui.overlay.querySelector('strong').textContent='Brain load failed';ui.overlay.querySelector('span').textContent=String(e?.message||e);}
 }
 
-function loop(now) {
-  if (!state.running) return;
-  const dt = state.lastFrameAt ? (now - state.lastFrameAt) / 1000 : 0;
-  state.lastFrameAt = now;
-  state.game.update(dt);
-  state.game.render();
-  updateGameStats();
+function brainBounds(pos){
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;const n=pos.length/3;const stride=Math.max(1,Math.floor(n/5000));
+  for(let i=0;i<n;i+=stride){const x=pos[i*3],y=pos[i*3+1];if(!Number.isFinite(x+y))continue;minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
+  return{minX,maxX,minY,maxY};
+}
 
-  if (state.gameReady && now - state.lastControlAt > 70) {
-    state.lastControlAt = now;
-    control(now);
+function drawBrain(i){
+  const a=agents[i],cv=ui.fly[i].brain,c=cv.getContext('2d'),w=cv.width,h=cv.height;
+  c.fillStyle='#05090c';c.fillRect(0,0,w,h);
+  if(!a.positions||!a.bounds){c.fillStyle='#71808c';c.font='12px monospace';c.fillText('loading connectome…',16,24);return;}
+  const p=a.positions,n=p.length/3,b=a.bounds;const sx=(w-28)/Math.max(1,b.maxX-b.minX),sy=(h-28)/Math.max(1,b.maxY-b.minY),s=Math.min(sx,sy);
+  const ox=(w-(b.maxX-b.minX)*s)/2,oy=(h-(b.maxY-b.minY)*s)/2;
+  c.fillStyle='rgba(140,159,169,.12)';const stride=Math.max(1,Math.floor(n/2700));
+  for(let k=0;k<n;k+=stride){const x=ox+(p[k*3]-b.minX)*s,y=oy+(p[k*3+1]-b.minY)*s;if(Number.isFinite(x+y))c.fillRect(x,y,1,1);}
+  c.fillStyle=i?'#ff7b91':'#67b7ff';for(const k of a.frame.active_idx||[]){if(k>=n)continue;const x=ox+(p[k*3]-b.minX)*s,y=oy+(p[k*3+1]-b.minY)*s;if(Number.isFinite(x+y))c.fillRect(x-1,y-1,2.4,2.4);}
+}
+
+function updateAgentUI(i){
+  const a=agents[i],f=arena.fly[i],u=ui.fly[i],sens=arena.getSensory(i);
+  u.active.textContent=Number(a.frame.active_neurons||0).toLocaleString();
+  u.rate.textContent=`${Number(a.frame.mean_rate_hz||0).toFixed(2)} Hz`;
+  u.action.textContent=ACTIONS[a.action]?.name||'idle';
+  u.stability.textContent=f.stability.toFixed(0);
+  u.contacts.textContent=f.contacts.toLocaleString();
+  u.epsilon.textContent=a.learner.epsilon.toFixed(3);
+  u.reward.textContent=a.reward.toFixed(2);
+  u.distance.textContent=sens.meta.distance.toFixed(2);
+}
+
+function aggregateEvents(events){
+  const rewards=[-.004,-.004];let terminal=false;
+  for(const e of events){
+    if(Array.isArray(e.rewards)){rewards[0]+=Number(e.rewards[0])||0;rewards[1]+=Number(e.rewards[1])||0;}
+    if(e.type==='contact'&&Number.isInteger(e.receiver)){
+      const r=e.receiver;const sens=arena.getSensory(r);const side=sens.meta.bearing_deg<0?'left':sens.meta.bearing_deg>0?'right':'center';
+      agents[r].worker?.postMessage({cmd:'contact',side,strength:clamp(Number(e.severity)||.5,0,1)});
+    }
+    if(e.terminal)terminal=true;
   }
-  drawBrain(();
-  drawReward();
-  state.raf = requestAnimationFrame(loop);
+  return{rewards,terminal};
 }
 
-async function start() {
-  if (state.running) return;
-  ui.start.disabled = true;
-  setStatus(ui.gameStatus, 'booting', 'warn');
-  try {
-    await state.game.boot();
-    state.gameReady = true;
-    state.running = true;
-    state.episode = state.episode > 0 ? state.episode + 1 : 1;
-    state.episodeReward = 0;
-    state.previousRGBA = null;
-    state.adaptation = null;
-    state.previousFeatures = null;
-    state.lastFrameAt = performance.now();
-    state.lastControlAt = 0;
-    ui.episode.textContent = state.episode.toLocaleString();
-    ui.overlay.hidden = true;
-    ui.pause.disabled = false;
-    setStatus(ui.gameStatus, state.restored ? 'running · saved saber learning restored' : 'running · random blocks', 'ok');
-    if (brain && state.brainReady) brain.postMessage({ cmd: 'play' });
-    persistExperiment();
-    state.raf = requestAnimationFrame(loop);
-  } catch (error) {
-    setStatus(ui.gameStatus, 'boot failed', 'error');
-    ui.start.disabled = false;
-    console.error(error);
+function control(now){
+  const events=arena.consumeEvents();const outcome=aggregateEvents(events);
+  for(let i=0;i<2;i++){
+    const a=agents[i];if(!a.ready)continue;
+    const sensory=arena.getSensory(i);a.worker.postMessage({cmd:'vision',vision:sensory});
+    if(!Number.isFinite(a.frame.t_ms)||a.frame.t_ms<=0)continue;
+    const x=neuralFeatures(a.frame);
+    if(a.previousFeatures)a.learner.update(a.previousFeatures,a.action,outcome.rewards[i],x,outcome.terminal);
+    a.previousFeatures=x;a.reward+=outcome.rewards[i];
+    if(outcome.terminal){a.worker.postMessage({cmd:'reset',seed:(arena.round+1)*97+i*31});a.previousFeatures=null;a.action=0;a.actionUntil=0;}
+    if(now>=a.actionUntil&&!outcome.terminal){
+      const prior=neuralActionPrior(a.frame,ACTIONS.length);const mask=arena.getActionMask(i);const next=a.learner.choose(x,prior,mask);a.action=next;arena.setAction(i,next);
+      a.actionUntil=now+(next===5?260:105+Math.random()*80);
+    }
+    updateAgentUI(i);
   }
 }
 
-ui.start.addEventListener('click', start);
-ui.fullscreen.addEventListener('click', enterFullscreen);
-ui.fullscreenExit.addEventListener('click', exitFullscreen);
-gameCanvas.addEventListener('dblclick', enterFullscreen);
-document.addEventListener('fullscreenchange', () => {
-  ui.fullscreen.textContent = document.fullscreenElement === gameWrap ? 'Fullscreen active' : 'Fullscreen game';
-});
+function updateGlobal(){
+  ui.round.textContent=arena.round.toLocaleString();ui.time.textContent=`${arena.roundTime.toFixed(1)}s`;ui.scoreA.textContent=arena.fly[0].score;ui.scoreB.textContent=arena.fly[1].score;
+}
 
-ui.pause.addEventListener('click', () => {
-  state.running = !state.running;
-  ui.pause.textContent = state.running ? 'Pause' : 'Resume';
-  if (brain) brain.postMessage({ cmd: state.running ? 'play' : 'pause' });
-  if (state.running) {
-    state.lastFrameAt = performance.now();
-    state.raf = requestAnimationFrame(loop);
-    setStatus(ui.gameStatus, 'running · random blocks', 'ok');
-  } else {
-    cancelAnimationFrame(state.raf);
-    setAction(0);
-    setStatus(ui.gameStatus, 'paused');
-    persistExperiment();
-  }
-});
+function loop(now){
+  if(!running)return;const dt=lastFrame?(now-lastFrame)/1000:0;lastFrame=now;arena.update(dt);arena.render();
+  if(now-lastControl>70){lastControl=now;control(now);}
+  drawBrain(0);drawBrain(1);updateGlobal();raf=requestAnimationFrame(loop);
+}
 
-ui.reset.addEventListener('click', () => {
-  learner.reset();
-  state.bestReward = 0;
-  state.episode = 0;
-  state.rewards = [];
-  state.previousFeatures = null;
-  try { localStorage.removeItem(EXPERIMENT_KEY); } catch {}
-  ui.best.textContent = '0.00';
-  ui.episode.textContent = '0';
-  ui.epsilon.textContent = learner.epsilon.toFixed(3);
-  ui.updates.textContent = '0';
-  drawReward();
-});
+function start(){
+  if(running||!agents.every(a=>a.ready))return;running=true;ui.start.disabled=true;ui.pause.disabled=false;ui.pause.textContent='Pause';ui.overlay.hidden=true;arena.start();lastFrame=performance.now();lastControl=0;for(const a of agents)a.worker?.postMessage({cmd:'play'});raf=requestAnimationFrame(loop);status(ui.system,'arena running','ok');
+}
+function pause(){
+  running=!running;ui.pause.textContent=running?'Pause':'Resume';arena.running=running;for(const a of agents)a.worker?.postMessage({cmd:running?'play':'pause'});if(running){lastFrame=performance.now();raf=requestAnimationFrame(loop);status(ui.system,'arena running','ok');}else{cancelAnimationFrame(raf);status(ui.system,'paused');}
+}
+function resetLearning(){
+  for(const a of agents){a.learner.reset();a.reward=0;a.previousFeatures=null;a.action=0;}
+  arena.resetMatch();updateGlobal();for(let i=0;i<2;i++)updateAgentUI(i);
+}
 
-window.addEventListener('pagehide', persistExperiment);
-window.addEventListener('beforeunload', persistExperiment);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persistExperiment(); });
-setInterval(() => { if (state.running) persistExperiment(); }, 5000);
-
-setStatus(ui.gameStatus, state.restored ? 'saved saber learning ready' : 'game idle');
-state.game.render();
-drawBrain();
-drawReward();
-if (AUTO) setTimeout(() => ui.start.click(), 50);
+ui.start.addEventListener('click',start);ui.pause.addEventListener('click',pause);ui.reset.addEventListener('click',resetLearning);
+window.addEventListener('pagehide',()=>agents.forEach(a=>a.learner.persist()));
+setInterval(()=>agents.forEach(a=>a.learner.persist()),5000);
+arena.render();drawBrain(0);drawBrain(1);updateGlobal();bootAll();
